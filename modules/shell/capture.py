@@ -36,15 +36,16 @@ def parser(root):
 
 
 class Observation:
-    def __init__(self, root):
+    def __init__(self, root, *, environment=False):
         self.snapshot = None
         self.binding = None
         self._source_paths = ()
+        self.environment = None
         self.public = dict(status='unavailable', codes=[], restore_supported=True)
         try:
             helper = parser(root)
-            result = observe.observe(os.environ['HOME'], helper, aliases=True, independent=True)
-            self.public.update(status='observed' if result.snapshot._value['items'] or not result.codes else 'unsupported',
+            result = observe.observe(os.environ['HOME'], helper, aliases=True, independent=True, environment=environment)
+            self.public.update(status='observed' if any(r['kind'] in ('alias', 'function') for r in result.snapshot._value['items']) or not result.codes else 'unsupported',
                                codes=list(result.codes), uncertainties=list(result.uncertainties))
             loaded = {row['source'] for row in result._loads}
             exclusions = {}
@@ -65,7 +66,8 @@ class Observation:
             # A bounded declaration recipe is distinct from a startup snapshot.
             # Rejected source relationships stay explicit outside its scope.
             try:
-                state.declaration_order(result.snapshot)  # Must have a portable Restore order.
+                state.declaration_order(state.select(result.snapshot, [r['id'] for r in result.snapshot._value['items']
+                    if r['kind'] in ('alias', 'function')]))  # Must have a portable Restore order.
             except state.Invalid:
                 self.public.update(status='unsupported', codes=sorted(set(self.public['codes']) | {'ambiguous_function'}))
                 return
@@ -77,12 +79,25 @@ class Observation:
                                    for p, f in result._files.items()},
                             loads=result._loads, uncertainties=result.uncertainties)
             self.binding = state.digest(json.dumps(evidence, sort_keys=True, separators=(',', ':')).encode())
+            if environment:
+                excluded = {reason for f in result._files.values() for reason in f.get('environment_exclusions', ())}
+                if set(result.codes).intersection({'unsafe_source', 'source_unresolved', 'startup_unresolved',
+                                                   'cyclic_source', 'ambiguous_source', 'ambiguous_source_command'}):
+                    excluded.add('unqualified_source')
+                self.environment = dict(exclusions=sorted(excluded),
+                                        available='environment_spans_unavailable' not in result.codes or
+                                        any(r['kind'] in state.environment.KINDS for r in result.snapshot._value['items']))
+                self.environment['explanations'] = state.environment.scope_explanations(self.environment['exclusions'])
+                if not self.environment['available']:
+                    self.environment['explanations'].append('Variables & PATH requires the updated bundled shell parser.')
             self.snapshot = result.snapshot
             self._source_paths = tuple(result._files)
         except (client.Invalid, observe.Invalid) as exc:
             if exc.code in ('cancelled', 'process_cleanup_failed'):
                 raise
             self.public['codes'] = [exc.code]
+            if environment:
+                self.environment = dict(available=False, exclusions=[], explanations=['Variables & PATH could not be inspected safely.'])
 
     def __repr__(self):
         return '<ShellCaptureObservation private>'
@@ -90,8 +105,24 @@ class Observation:
     def entries(self):
         if self.snapshot is None:
             return []
-        return [dict(item_id=row['id'], label=row['key'], _source=row['id'])
-                for row in self.snapshot._value['items']]
+        value = self.snapshot._value
+        contexts = {r['id']: r['context'] for r in value['loads']}
+        sources = {r['id']: r['path'] for r in value['sources']}
+        result = []
+        loads = {r['id']: r for r in value['loads']}
+        def order(row):
+            if row['kind'] not in state.environment.KINDS:
+                return (0, row['id'])
+            positions = [state.load_position(loads, key, row['details']['span'][0]) for key in row['loads']
+                         if contexts[key] == 'interactive-login']
+            return (1, min(positions) if positions else (), row['id'])
+        for row in sorted(value['items'], key=order):
+            entry = dict(item_id=row['id'], label=row['key'], _source=row['id'])
+            if row['kind'] in state.environment.KINDS:
+                info = state.environment.presentation(row, {contexts[k] for k in row['loads']}, sources[row['source']])
+                entry.update(label=info.pop('label'), environment=info)
+            result.append(entry)
+        return result
 
     def selected(self, ids, scripts=()):
         return state.encode(state.with_scripts(state.select(self.snapshot, ids), scripts))

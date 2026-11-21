@@ -43,7 +43,7 @@ enum StatusFailure: Error, Equatable {
             switch code {
             case "bundle_unavailable": "The selected Saved Environment is unavailable. Choose an accessible file."
             case "bundle_invalid": "The selected Saved Environment is invalid or corrupted. Choose a valid Bundle."
-            case "unsupported_bundle": "This Saved Environment uses an unsupported Bundle format."
+            case "unsupported_bundle": "This version of Macseed cannot check this saved environment."
             case "reference_unavailable": "The selected reference is unavailable. Choose an accessible saved configuration or Blueprint."
             case "reference_invalid": "The selected configuration or Blueprint is invalid. Choose a valid reference."
             case "reference_changed": "The reference changed during the check. Check again against its current contents."
@@ -177,6 +177,9 @@ struct EnvironmentStatusPresentation {
                 if identity == "scope", coverageRecords.contains(where: { $0.domain == domain && $0.itemID == identity && $0.sourceStatus == "partial" }) {
                     return ShellCommandPresentation.coverageTitle
                 }
+                if let label = result.referencePresentation?.shellEnvironmentLabels?[identity],
+                   result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity &&
+                       ["variable_declaration", "path_operation", "initializer_declaration"].contains($0.predicate ?? "") }) { return label }
                 if let label = result.referencePresentation?.shellAliasLabels?[identity],
                    result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity && ["alias_definition", "alias_recovery"].contains($0.predicate ?? "") }) { return ShellDefinitionPresentation.title(domain: domain, id: identity, name: label) }
                 if let label = result.referencePresentation?.shellFunctionLabels?[identity],
@@ -248,7 +251,7 @@ struct EnvironmentStatusPresentation {
                 case _ where row.domain == "shell-zsh" && owner?.predicate == "script_file" && row.support == "supported":
                     action = "Couldn’t inspect the script safely. Check its path, ownership, permissions and metadata."
                 case _ where row.domain == "shell-zsh" && ShellCommandPresentation.dependencyExplanation(row.reason) != nil:
-                    action = ShellCommandPresentation.dependencyExplanation(row.reason)!
+                    action = ShellCommandPresentation.dependencyExplanation(row.reason, predicate: owner?.predicate)!
                 case "unknown_difference": action = "Couldn’t determine how this requirement differs."
                 case "observation_failed": action = "Couldn’t read the current state."
                 default: action = row.support == "unsupported" ? "This requirement cannot be checked in this version." : "Couldn’t verify this requirement."
@@ -284,14 +287,23 @@ struct EnvironmentStatusPresentation {
             if coverage?.domain == "shell-zsh", coverage?.itemID == "scope", coverage?.disposition == "resolved",
                diagnostic.code == "shell_activation_unknown", diagnostic.severity == "info", diagnostic.phase == "scope" {
                 let facts = result.comparisonRecords.filter { $0.domain == "shell-zsh" }
-                let definitions = facts.contains { $0.itemID.hasPrefix("shell-alias:") || $0.itemID.hasPrefix("shell-function:") }
-                let scripts = facts.contains { $0.itemID.hasPrefix("shell-script:") }
-                if (definitions || scripts) && facts.allSatisfy({ $0.comparisonKind == "matching" }) {
-                    let category = definitions ? ShellCommandPresentation.aliasesID : ShellCommandPresentation.scriptsID
-                    coverageHelp[category] = (definitions ? "The exact saved definitions match." : "The saved script files match.")
-                        + " Runtime activation and dynamic Shell startup were not verified."
-                    continue
+                let definitions = facts.filter { $0.itemID.hasPrefix("shell-alias:") || $0.itemID.hasPrefix("shell-function:") }
+                let scripts = facts.filter { $0.itemID.hasPrefix("shell-script:") }
+                let environment = facts.filter { CoreCaptureInventoryRow.Item.isEnvironmentID($0.itemID) }
+                if !environment.isEmpty {
+                    let category = definitions.isEmpty && scripts.isEmpty ? "shell-zsh" : DeveloperSelectionGroup.environmentID
+                    coverageHelp[category] = environment.allSatisfy { $0.comparisonKind == "matching" }
+                        ? "The saved declarations and required prerequisites match. Dynamic Shell startup was not executed."
+                        : ShellCommandPresentation.activationScope
                 }
+                if !definitions.isEmpty || !scripts.isEmpty {
+                    let category = definitions.isEmpty ? ShellCommandPresentation.scriptsID : ShellCommandPresentation.aliasesID
+                    let members = definitions.isEmpty ? scripts : definitions
+                    let matched = definitions.isEmpty ? "The saved script files match. " : "The exact saved definitions match. "
+                    coverageHelp[category] = (members.allSatisfy { $0.comparisonKind == "matching" } ? matched : "")
+                        + ShellCommandPresentation.activationScope
+                }
+                if !environment.isEmpty || !definitions.isEmpty || !scripts.isEmpty { continue }
             }
             // Correlate by the owner identity; retain matching facts and every diagnostic in the same row.
             let attention = ["warning", "error"].contains(diagnostic.severity)
@@ -491,8 +503,10 @@ struct EnvironmentStatusPresentation {
         categories = order.map { domain in
             let legacyShell = domain == "shell-zsh" && result.records.verificationRecords.contains { $0.domain == domain && $0.predicate == "file_content" }
             let scriptShell = domain == "shell-zsh" && result.records.verificationRecords.contains { $0.domain == domain && ["script_file", "alias_definition", "alias_recovery", "function_definition"].contains($0.predicate ?? "") }
+            let environment = domain == "shell-zsh" && result.records.verificationRecords.contains { $0.domain == domain && CoreCaptureInventoryRow.Item.isEnvironmentID($0.itemID) }
+            let shellTitle = environment ? (scriptShell ? "Shell" : "Variables & PATH") : nil
             // Keep Check's existing single category, with a title that also covers files.
-            return DisplayCategory(id: domain, title: DeveloperSelectionGroup.label(domain, fallback: legacyShell ? "Settings" : scriptShell ? "Custom Commands" : names[domain]?.0 ?? domain), symbol: names[domain]?.1 ?? "folder", items: ShellDefinitionPresentation.ordered(grouped[domain]!, domain: domain, id: { $0.id }, name: { $0.title }))
+            return DisplayCategory(id: domain, title: shellTitle ?? DeveloperSelectionGroup.label(domain, fallback: legacyShell ? "Settings" : scriptShell ? "Custom Commands" : names[domain]?.0 ?? domain), symbol: names[domain]?.1 ?? "folder", items: ShellDefinitionPresentation.ordered(grouped[domain]!, domain: domain, id: { $0.id }, name: { $0.title }))
         }
         sections = EnvironmentStatusSection.project(categories)
         let independentUnverified = result.comparisonRecords.contains { $0.comparisonKind == "unverified" && !dependentRepositoryRecords.contains($0.recordID) }
@@ -587,9 +601,18 @@ struct EnvironmentStatusSection: Identifiable {
             categories.first { $0.id == id && !$0.items.isEmpty }
         }
         func group(_ id: String, _ title: String, _ symbol: String, _ domains: [String]) -> Entry? {
-            let children = domains.compactMap(category)
-            guard !children.isEmpty else { return nil }
-            used.formUnion(children.map(\.id))
+            let members = domains.compactMap(category)
+            guard !members.isEmpty else { return nil }
+            used.formUnion(members.map(\.id))
+            let children = members.flatMap { member -> [DisplayCategory] in
+                guard member.id == "shell-zsh", member.title == "Shell" else { return [member] }
+                let environment = member.items.filter { CoreCaptureInventoryRow.Item.isEnvironmentID(String($0.id.dropFirst("shell-zsh:".count))) }
+                let ids = Set(environment.map(\.id))
+                return [DisplayCategory(id: ShellCommandPresentation.commandsID, title: "Custom Commands", symbol: "terminal",
+                                        items: member.items.filter { !ids.contains($0.id) }),
+                        DisplayCategory(id: DeveloperSelectionGroup.environmentID, title: "Variables & PATH", symbol: "list.bullet.rectangle",
+                                        items: environment)]
+            }
             return Entry(category: DisplayCategory(id: id, title: title, symbol: symbol,
                 items: children.flatMap(\.items)), children: children)
         }

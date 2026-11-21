@@ -39,9 +39,10 @@ Joint real-Mac SSH E2E and current Secure Check hosted CI
 qualification remain open. Continuing Homebrew, remaining 16I/16K,
 Stage 3C recovery and Stage 17 distribution qualification remain open. Existing
 durable journals, Stop and safety fences remain implemented. Unified UI Scenario
-Catalog is deferred tooling. Aliases & Scripts v5 has bounded real GUI A/B/C
-acceptance; partial Shell coverage remains. The current functional priority is
-Shell / Zsh Completion, with standalone Zsh Functions next, followed by Stage 3C
+Catalog is deferred tooling. B4 Custom Commands and B5 Variables & PATH have
+controlled real-Mac functional acceptance. B5 hosted CI and packaged clean-Mac
+qualification remain open. Shell Settings and
+qualified Plugins & Themes continue the pre-1.0 Shell work, followed by Stage 3C
 Recovery, remaining Stage 16 functionality, Stage 17 distribution, final comprehensive
 qualification and Early Access / 1.0. Fast/Full CI separation is deferred; retain all
 mandatory coverage. Follow the current
@@ -256,6 +257,11 @@ mandatory full-suite cycle after every correction or checkpoint.
   affected consumers. Desktop changes use relevant feature and/or presentation
   cases; complete affected suites are not mandatory after every small correction.
   A successful Debug build alone does not prove behavioral correctness.
+  Extend existing Native hierarchies with their shared category components and
+  selection rules. Preserve sibling alignment, icons, disclosures, counters and
+  parent/child consent behavior. Parent selection includes all eligible children.
+  Request separate authorization only for operations that require it. Validate the affected
+  hierarchy in the rebuilt app before handoff. See [Native category guidance](docs/DESKTOP.md#capture-review--implemented-structure-and-geometry).
 - **Reuse prior PASS evidence:** record its command, scope, revision/patch context
   and relevant environment assumptions. Retain it when diff review confirms the
   tested code, dependencies, fixtures and contracts are unchanged. Revalidate only

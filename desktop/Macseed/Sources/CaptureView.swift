@@ -171,10 +171,21 @@ struct CaptureView: View {
                             accessibilityTitle: "Select " + group.title, mixedSelectsAll: group != .shell) { model.selectDeveloperGroup(group, included: $0) }
                             .disabled(!model.developerGroupAvailable(group) || model.state != .review || runtime.isActive)) },
                         developerSummary: { DeveloperSelectionGroup.summary(model.developerGroupState($0), available: model.developerGroupAvailable($0)) },
-                        shellCustomCommands: model.supportsManualScripts || model.categories.contains { $0.id == "shell-zsh" && $0.itemSelectable },
-                        shellCommandsSelection: AnyView(NativeSelectionCheckbox("", state: model.developerGroupState(.shell),
-                            accessibilityTitle: "Select Custom Commands", mixedSelectsAll: false) { model.selectDeveloperGroup(.shell, included: $0) }
-                            .disabled(!model.developerGroupAvailable(.shell) || runtime.isActive)),
+                        shellCustomCommands: model.supportsManualScripts || model.categories.contains { $0.id == "shell-zsh" && $0.customCommands.itemSelectable },
+                        shellCommandsSummary: DeveloperSelectionGroup.summary(model.developerGroupState(.shell, commandsOnly: true),
+                            available: model.customCommandsAvailable),
+                        environmentStatus: AnyView(CaptureStatusText(title: model.environmentSelectionState == .none
+                            ? DeveloperSelectionGroup.summary(.none, available: !model.environmentItems.isEmpty)
+                            : CaptureStatusText.selectionCount(model.environmentSelectedCount, total: model.environmentItems.count),
+                            secondary: model.environmentSelectionState == .none)),
+                        environmentSelection: AnyView(NativeSelectionCheckbox("", state: model.environmentSelectionState,
+                            accessibilityTitle: "Select Variables & PATH", mixedSelectsAll: false, setIncluded: model.selectEnvironmentItems)
+                            .disabled(model.environmentItems.isEmpty || runtime.isActive)
+                            .help("Select these declarations for plaintext capture.")),
+                        environmentItems: model.environmentItems.isEmpty && model.environmentNotes.isEmpty ? nil : AnyView(environmentRows),
+                        shellCommandsSelection: AnyView(NativeSelectionCheckbox("", state: model.developerGroupState(.shell, commandsOnly: true),
+                            accessibilityTitle: "Select Custom Commands", mixedSelectsAll: false) { model.selectShellParent(included: $0) }
+                            .disabled(!model.customCommandsAvailable || runtime.isActive)),
                         shellScripts: AnyView(ShellScriptSelectionView(scripts: model.shellScriptCandidates,
                             available: Set(model.availableShellScripts.map(\.id)), selected: model.authorizedShellScripts,
                             editable: !runtime.isActive, flow: .capture,
@@ -187,7 +198,7 @@ struct CaptureView: View {
                         attention: { CaptureReviewPresentation.attention($0.flatMap(\.categories), model: model) }) { row in
                         if row.id == "macos-settings" {
                             CaptureMacOSSettingsView(model: model, treeExpansion: treeExpansion)
-                        } else if let category = row.categories.first {
+                        } else if let category = row.categories.first?.customCommands, category.selectable || row.categories.first?.row.items.contains(where: { $0.environment != nil }) != true {
                             CaptureCategorySelectionView(model: model, category: category,
                                 expansion: WorkflowExpansion.binding(row.id, in: treeExpansion),
                                 displayTitle: DeveloperSelectionGroup.title(category.id, fallback: category.title),
@@ -200,6 +211,12 @@ struct CaptureView: View {
             case .confirmation:
                 if let prepared = model.preparation, let selection = prepared.publicationSelection {
                     Text("Save this environment?").font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                    if selection.items["shell-zsh"]?.contains(where: CoreCaptureInventoryRow.Item.isEnvironmentID) == true {
+                        Text(model.environmentItems.contains { $0.environment?.captureOnly == true }
+                            ? "Variables & PATH will be saved as plaintext. Rebuild and Check are unavailable for this bundle."
+                            : "Variables & PATH will be saved as plaintext.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
                     if let duplicates = prepared.applicationDuplicates, !duplicates.isEmpty {
                         Text("Confirmed duplicate applications will be saved as Homebrew requirements. Your original selection is retained.")
                             .font(.callout).foregroundStyle(.secondary)
@@ -226,7 +243,12 @@ struct CaptureView: View {
                         captureShellScriptInspections: model.shellScriptInspections)
                 }
             case .result:
-                if let result = model.resultPresentation { CaptureResultContent(result: result, expansion: treeExpansion) }
+                if let result = model.resultPresentation {
+                    CaptureResultContent(result: result, expansion: treeExpansion)
+                    if model.publication?.bundle.restoreSupported == false {
+                        Text("Rebuild and Check are unavailable for this saved bundle.").font(.callout).foregroundStyle(.secondary)
+                    }
+                }
             case .failed, .cancelled:
                 Label(model.state == .cancelled ? "Capture Cancelled" : "Capture Failed",
                       systemImage: model.state == .cancelled ? "stop.circle" : TaskRowState.failed.symbol)
@@ -307,9 +329,33 @@ struct CaptureView: View {
             panel.begin { response in if response == .OK, let url = panel.url { model.addSSHIdentity(url) } }
         }
     }
+    private var environmentRows: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !model.environmentItems.isEmpty {
+                Text(model.environmentItems.contains { $0.environment?.captureOnly == true } ? "Plaintext · Capture only" : "Plaintext").font(.caption).foregroundStyle(.secondary)
+            }
+            if !model.environmentNotes.isEmpty {
+                HStack(spacing: 8) {
+                    Text("Excluded declarations").font(.callout)
+                    ContextualHelpButton(id: "selection.help.shell-environment.exclusions", title: "Excluded declarations",
+                        description: model.environmentNotes.joined(separator: "\n"), hint: "Show exclusion details", aboveFooter: true)
+                }
+            }
+            ForEach(model.environmentItems, id: \.itemID) { item in
+                if let detail = item.environment {
+                    CaptureItemSelectionRow(title: item.label, included: Binding(
+                        get: { model.selectedItems["shell-zsh"]?.contains(item.itemID) == true },
+                        set: { model.selectItem("shell-zsh", item: item.itemID, included: $0) }),
+                        helpButton: ContextualHelpButton(id: item.itemID, title: item.label, description: detail.explanation,
+                            information: detail.context + " · " + detail.origin, hint: "Show declaration details", aboveFooter: true))
+                }
+            }
+        }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset + 2 * CaptureReviewPresentation.hierarchyStep).padding(.trailing, 16)
+    }
     private func disclosureIDs(in scope: CaptureSelectionScope) -> Set<String> {
         let ids = model.categories.map(\.id) + [CaptureHierarchy.secureTransferID]
             + (model.supportsManualScripts || model.categories.contains { $0.id == "shell-zsh" && $0.itemSelectable } ? [ShellCommandPresentation.commandsID] : [])
+            + (model.environmentItems.isEmpty && model.environmentNotes.isEmpty ? [] : [DeveloperSelectionGroup.environmentID])
             + (model.supportsManualScripts || !model.shellScriptCandidates.isEmpty ? [ShellCommandPresentation.scriptsID] : [])
         return (scope == .advanced ? DeveloperSelectionGroup.disclosureIDs(ids) : CaptureHierarchy.disclosureIDs(ids, scope: scope))
             .subtracting(model.categories.filter { !CaptureCategorySelectionView.hasDisclosure($0) }.map(\.id))

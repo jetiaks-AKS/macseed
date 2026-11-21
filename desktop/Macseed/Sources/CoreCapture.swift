@@ -1,11 +1,17 @@
 import Foundation
 import CryptoKit
 
-// Protocol Capture aggregation: functional Scripts is independent of the
-// physical Shell domain. Alias definitions and selected files count separately.
+// Item IDs are checked against Core inventory before validating Prepare or its receipt.
 enum CoreCaptureCounts {
+    static func shell(items: Set<String>, scripts: Set<String>) -> [String: Int] {
+        let environment = items.filter(CoreCaptureInventoryRow.Item.isEnvironmentID).count
+        return ["aliases_functions": items.count - environment, "scripts": scripts.count, "variables_path": environment]
+    }
     static func domains(categories: Set<String>, items: [String: Set<String>], scripts: Set<String>) -> Int {
-        categories.union(items.filter { !$0.value.isEmpty }.keys).count + (scripts.isEmpty ? 0 : 1)
+        // Whole-category Shell retains the legacy single-domain meaning.
+        let wholeAndOther = categories.union(items.filter { $0.key != "shell-zsh" && !$0.value.isEmpty }.keys)
+        let shellCounts = shell(items: items["shell-zsh"] ?? [], scripts: scripts)
+        return wholeAndOther.count + shellCounts.values.filter { $0 > 0 }.count
     }
 }
 
@@ -22,6 +28,7 @@ struct CoreShellScript: Decodable, Identifiable, Equatable {
         guard (rows ?? []).allSatisfy({ row in
             guard let ids = row.aliasIDs, let observation = row.observationID else { return false }
             return (!ids.isEmpty || row.independent == true) && ids.count <= 256 && Set(ids).count == ids.count && Set(ids).isSubset(of: aliases)
+                && !ids.contains(where: CoreCaptureInventoryRow.Item.isEnvironmentID)
                 && observation.range(of: "^[0-9a-f]{64}\\z", options: .regularExpression) != nil
         }) else { throw CoreRuntimeError.malformedEvent }
     }
@@ -190,6 +197,11 @@ struct CoreCaptureShellObservation: Decodable {
 }
 
 struct CoreCapturePreparation: Decodable {
+    struct EnvironmentScope: Decodable {
+        let available: Bool
+        let explanations: [String]
+    }
+    var shellEnvironment: EnvironmentScope? = nil
     var shellFunctions: CoreCaptureShellObservation? = nil
     var shellScriptPolicies: [String]? = nil
     var shellScriptPolicy: String? = nil
@@ -219,6 +231,7 @@ struct CoreCapturePreparation: Decodable {
         }
     }
     enum CodingKeys: String, CodingKey {
+        case shellEnvironment = "shell_environment"
         case shellFunctions = "shell_functions"
         case shellScriptSelection = "shell_script_selection"
         case shellScriptPolicies = "shell_script_policies", shellScriptPolicy = "shell_script_policy"
@@ -244,6 +257,17 @@ struct CoreCapturePreparation: Decodable {
             $0.domain == "shell-zsh" && $0.status == "present" && $0.selectionMode == "items"
                 && (!$0.items.isEmpty || (["opaque-file-v4", "opaque-file-v5"].contains(shellScriptPolicy ?? "") && !(expectedScripts ?? []).isEmpty))
         }) else { throw CoreRuntimeError.malformedEvent }
+        func safeText(_ value: String, _ limit: Int) -> Bool {
+            !value.isEmpty && value.utf8.count <= limit && !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        }
+        guard (shellEnvironment?.explanations ?? []).count <= 16,
+              (shellEnvironment?.explanations ?? []).allSatisfy({ safeText($0, 200) }),
+              inventory.allSatisfy({ row in row.items.allSatisfy { item in
+                  let environmentID = CoreCaptureInventoryRow.Item.isEnvironmentID(item.itemID)
+                  guard let detail = item.environment else { return !environmentID }
+                  return environmentID && row.domain == "shell-zsh" && shellEnvironment?.available == true
+                      && safeText(item.label, 160) && detail.valid
+              } }) else { throw CoreRuntimeError.malformedEvent }
         try secureIdentities.validate()
         let identities = expected?.secureIdentities ?? []
         guard preparedCaptureID.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
@@ -308,12 +332,15 @@ struct CoreCapturePublication: Decodable {
         let secureComponent: Bool
         var requiredFeatures: [String: Int]? = nil
         var shellScriptCandidates: [CoreShellScript]? = nil
-        var typedShell: Bool { requiredFeatures?["shell-state"] == 1 }
+        var shellFunctionalCounts: [String: Int]? = nil
+        var restoreSupported: Bool? = nil
+        var typedShell: Bool { [1, 2].contains(requiredFeatures?["shell-state"] ?? 0) }
         enum CodingKeys: String, CodingKey {
             case formatVersion = "format_version", selectedCategories = "selected_categories"
             case selectedItemCounts = "selected_item_counts", secureComponent = "secure_component"
             case shellScriptCandidates = "shell_script_candidates"
-            case requiredFeatures = "required_features"
+            case shellFunctionalCounts = "shell_functional_counts"
+            case requiredFeatures = "required_features", restoreSupported = "restore_supported"
         }
         var capturedDomains: Set<String> { Set(selectedCategories).union(selectedItemCounts.filter { $0.value > 0 }.map(\.key)) }
         var itemCount: Int { selectedItemCounts.values.reduce(0, +) }
@@ -327,6 +354,9 @@ struct CoreCapturePublication: Decodable {
                 + aliasCount + Set((shellScriptCandidates ?? []).map(\.id)).count
         }
         var functionalDomainCount: Int {
+            if let shellFunctionalCounts {
+                return capturedDomains.subtracting(["shell-zsh"]).count + shellFunctionalCounts.values.filter { $0 > 0 }.count
+            }
             let aliasesSelected = capturedDomains.contains("shell-zsh") && (selectedItemCounts["shell-zsh"] == nil || aliasCount > 0)
             return capturedDomains.subtracting(["shell-zsh"]).count + (aliasesSelected ? 1 : 0)
                 + ((shellScriptCandidates ?? []).isEmpty ? 0 : 1)
@@ -337,6 +367,15 @@ struct CoreCapturePublication: Decodable {
     }
     func validate(preparation: CoreCapturePreparation, destination: URL) throws {
         try preparation.validate(expected: preparation.selection, expectedScripts: preparation.shellScriptSelection)
+        let shellCounts = CoreCaptureCounts.shell(items: Set(preparation.publicationSelection?.items["shell-zsh"] ?? []),
+            scripts: Set(preparation.shellScriptSelection ?? []))
+        let selectedEnvironment = (shellCounts["variables_path"] ?? 0) > 0
+        let selectedIDs = Set(preparation.publicationSelection?.items["shell-zsh"] ?? [])
+        let captureOnly = preparation.inventory.flatMap(\.items).contains { selectedIDs.contains($0.itemID) && $0.environment?.captureOnly == true }
+        guard CoreRestoreInspection.supportsBundleFeatures(bundle.requiredFeatures),
+              selectedEnvironment == (bundle.requiredFeatures?["shell-state"] == 2),
+              bundle.shellFunctionalCounts == (selectedEnvironment ? shellCounts : nil),
+              !selectedEnvironment || bundle.restoreSupported == !captureOnly else { throw CoreRuntimeError.malformedEvent }
         guard bundle.requiredFeatures?["shell-state"] == nil || bundle.typedShell,
               preparation.publicationSelection?.items["shell-zsh"]?.contains(where: { $0.hasPrefix("shell-function:") }) != true || bundle.typedShell else {
             throw CoreRuntimeError.malformedEvent

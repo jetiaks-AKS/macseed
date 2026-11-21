@@ -69,7 +69,29 @@ struct CoreCaptureInventoryRow: Decodable, Sendable {
     struct Item: Decodable, Sendable {
         let itemID: String
         let label: String
-        enum CodingKeys: String, CodingKey { case itemID = "item_id", label }
+        var environment: EnvironmentDetail? = nil
+        struct EnvironmentDetail: Decodable, Sendable {
+            let explanation: String
+            let context: String
+            let origin: String
+            var valid: Bool {
+                [(explanation, 240), (context, 48), (origin, 64)].allSatisfy { text, limit in
+                    !text.isEmpty && text.utf8.count <= limit && !text.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+                }
+            }
+            let captureOnly: Bool
+            enum CodingKeys: String, CodingKey { case explanation, context, origin, captureOnly = "capture_only" }
+        }
+        static func environmentPredicate(_ id: String) -> String? {
+            guard isEnvironmentID(id) else { return nil }
+            if id.hasPrefix("shell-variable:") { return "variable_declaration" }
+            if id.hasPrefix("shell-initializer:") { return "initializer_declaration" }
+            return "path_operation"
+        }
+        static func isEnvironmentID(_ id: String) -> Bool {
+            id.range(of: #"^shell-(variable|path-operation|initializer):[0-9a-f]{64}\z"#, options: .regularExpression) != nil
+        }
+        enum CodingKeys: String, CodingKey { case itemID = "item_id", label, environment }
     }
     enum CodingKeys: String, CodingKey { case domain, status, reason, items, selectionMode = "selection_mode", includedSettings = "included_settings" }
 }
@@ -250,7 +272,8 @@ struct CoreRequest: Sendable {
     let shellScriptSelection: [String]?
     let shellScriptPolicy: String?
     let shellScriptPaths: [String]
-    init(_ command: CoreCommand, operationID: String = UUID().uuidString, externalIdentityPaths: [String] = [], restoreDestinations: CoreRestoreDestinations? = nil, sshApprovals: CoreSSHApprovals? = nil, shellScriptIDs: [String] = [], shellScriptSelection: [String]? = nil, shellScriptPolicy: String? = nil, shellScriptPaths: [String] = []) {
+    let shellPlaintextIDs: [String]?
+    init(_ command: CoreCommand, operationID: String = UUID().uuidString, externalIdentityPaths: [String] = [], restoreDestinations: CoreRestoreDestinations? = nil, sshApprovals: CoreSSHApprovals? = nil, shellScriptIDs: [String] = [], shellScriptSelection: [String]? = nil, shellScriptPolicy: String? = nil, shellScriptPaths: [String] = [], shellPlaintextIDs: [String]? = nil) {
         self.command = command
         self.operationID = operationID
         self.externalIdentityPaths = externalIdentityPaths
@@ -259,6 +282,7 @@ struct CoreRequest: Sendable {
         self.shellScriptIDs = shellScriptIDs
         self.shellScriptSelection = shellScriptSelection
         self.shellScriptPolicy = shellScriptPolicy
+        self.shellPlaintextIDs = shellPlaintextIDs
         self.shellScriptPaths = shellScriptPaths
     }
     func encoded() throws -> Data { try wire().request }
@@ -269,6 +293,13 @@ struct CoreRequest: Sendable {
         var fields: [String: CoreJSON] = ["protocol_version": .integer(1), "operation_id": .string(operationID),
                                           "operation": .string(command.operation.rawValue)]
         if let parameters = try command.parameters() { fields["parameters"] = parameters }
+        if let shellPlaintextIDs {
+            guard [.capturePrepare, .captureExecute].contains(command.operation),
+                  var parameters = fields["parameters"]?.object else { throw CoreRuntimeError.invalidRequest }
+            parameters["shell_environment"] = .bool(true)
+            parameters["shell_plaintext_ids"] = .array(shellPlaintextIDs.sorted().map(CoreJSON.string))
+            fields["parameters"] = .object(parameters)
+        }
         if !shellScriptPaths.isEmpty {
             guard [.capturePrepare, .captureExecute, .captureScriptInspect].contains(command.operation),
                   ["opaque-file-v4", "opaque-file-v5"].contains(shellScriptPolicy ?? ""), shellScriptPaths.count <= (shellScriptPolicy == "opaque-file-v5" ? 128 : 16),
@@ -407,6 +438,14 @@ struct CoreCapabilities: Decodable, Sendable {
     let productVersion: String
     let operations: [String]
     let features: [String: CoreJSON]?
+    var supportsEnvironmentCapture: Bool {
+        let feature = features?["shell_environment_capture"]?.object
+        return feature?["version"]?.integer == 2 && feature?["restore_supported"]?.boolean != nil
+            && feature?["explicit_plaintext"]?.boolean == true
+    }
+    var supportsEnvironmentRecovery: Bool {
+        supportsEnvironmentCapture && features?["shell_environment_capture"]?.object?["restore_supported"]?.boolean == true
+    }
     var supportsSSHResolution: Bool { operations.contains("ssh_restore_review") && features?["ssh_identity_resolution"]?.object?["version"]?.integer == 1 }
     var supportsSecureRestoreDestinations: Bool { operations.contains("secure_restore_inventory") && features?["secure_restore_destinations"]?.object?["version"]?.integer == 1 }
     var supportsSecureRestoreSelection: Bool { supportsSecureRestoreDestinations && features?["secure_restore_destinations"]?.object?["selection_version"]?.integer == 2 }

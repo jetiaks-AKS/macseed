@@ -15,7 +15,10 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
   and integration, native Workspace E2E, Homebrew Setup Installer handoff and the
   remaining supported-domain, lifecycle, security and accessibility gates.
 - **Current functional priority:** Shell / Zsh Completion. Functional B4 Custom Commands passed real-Mac
-  GUI acceptance on 2026-11-18. **Variables & PATH** is the next Shell checkpoint.
+  GUI acceptance on 2026-11-18. B5 Variables & PATH passed its
+  [controlled real-Mac mixed Capture, Restore and Check](docs/qualification/SHELL-VARIABLES-PATH-2026-11-20.md#controlled-real-mac-acceptance).
+  [Provider qualification](docs/toolkit/CONFIGURATION.md#variables--path-recovery-b5c),
+  hosted CI, packaged clean-Mac and full-product E2E remain open.
   The functional taxonomy is Custom Commands
   (Aliases & Functions / Scripts in Selection),
   Variables & PATH and Settings, with Plugins & Themes conditional on qualified
@@ -254,8 +257,8 @@ by the approved Shell-first decision. Complete one bounded checkpoint at a time.
    [parser foundation](docs/core/SHELL-PARSER.md) and private
    [typed state codec](docs/toolkit/CONFIGURATION.md#typed-shell-state-foundation-b1) are implemented;
    explicit Functions Capture/Bundle and bounded Restore/Verify/Check are implemented.
-   With functional B4 Custom Commands accepted, proceed to **Variables & PATH**,
-   then Shell Settings, plus useful
+   With functional B4 Custom Commands and B5 Variables & PATH accepted, continue
+   Shell Settings and useful
    Plugins & Themes only when independently qualified. Startup/source relationships
    remain provenance and dependencies within these categories.
    Preserve legacy snapshots and existing approved capabilities. The

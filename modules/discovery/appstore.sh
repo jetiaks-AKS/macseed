@@ -45,6 +45,11 @@ discover_appstore() {
         return 2
     fi
 
+    # Capture binds both the generated file and the item order across two observations.
+    if [[ "${1:-}" == --stable-order && -n "$inventory" ]]; then
+        inventory="$(LC_ALL=C sort <<< "$inventory")" || return 2
+    fi
+
     if ! discovery_publish_file "$output_file" serialize_appstore_inventory "$inventory"; then
         error "Failed to publish App Store applications"
         return 2

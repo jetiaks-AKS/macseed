@@ -15,11 +15,19 @@ The [Shell contract](docs/toolkit/CONFIGURATION.md#shell--zsh-configuration) own
 source and definition contracts, including legacy whole-file behavior.
 
 The [B4 real-Mac GUI acceptance](docs/qualification/SHELL-UNIFIED-B4-2026-11-17.md#real-mac-gui-acceptance-2026-11-18)
-closed the mixed Custom Commands workflow. Remaining Shell work follows.
+closed the mixed Custom Commands workflow. The
+[B5 real-Mac acceptance](docs/qualification/SHELL-VARIABLES-PATH-2026-11-20.md#controlled-real-mac-acceptance)
+closed the qualified Variables & PATH functional lifecycle. The
+[final focused checks](docs/qualification/SHELL-VARIABLES-PATH-2026-11-20.md#final-protocol-v1-and-check-presentation-checks)
+cover partial Function plans and both Check expansion controls.
 
-- [ ] **Next — Variables & PATH:** separate portable static values, HOME-relative references,
-  ordered path entries, secrets and dynamic initialization. Qualify Apple Silicon and
-  Intel Homebrew prerequisites without rewriting arbitrary commands or paths.
+- [ ] **Variables & PATH recovery (B5C):** extend independently reviewed provider/release coverage.
+  Qualify default nvm activation with target Node/project evidence and
+  full pyenv initialization with competing shims or unqualified command paths. Extend
+  the reviewed standalone mise and Homebrew release sets, qualify a real custom
+  Homebrew prefix and establish a sustainable review and trust-update process.
+- [ ] Qualify the B5 patch in hosted CI. Packaged clean-Mac and full-product E2E
+  remain separate gates. Other deferred Check UX work remains open.
 - [ ] Qualify Function call/alias dependencies, side effects and target configurations
   beyond exact-definition recovery.
 - [ ] Qualify [protected Functions observation](docs/core/SHELL-PARSER.md#core-caller-b2a)
@@ -28,13 +36,15 @@ closed the mixed Custom Commands workflow. Remaining Shell work follows.
 - [ ] Qualify additional Shell syntax and Native robustness beyond the accepted B4 cases.
   Extend managed/redirected source and dependency support only under explicit contracts.
 - [ ] **Settings**: qualify options, history settings (not history contents), completion,
-  key bindings, prompt configuration and supported hooks.
+  key bindings, Starship Zsh prompt activation, zoxide navigation hooks and compinit.
+  Bind each to qualified target executables, completion directories and startup order.
 - [ ] Extend startup/source dependencies beyond the implemented bounded static chains
   and qualified ZDOTDIR where required by functional items. These are provenance,
   never extra UI categories; no execution during observation or unqualified source insertion.
 - [ ] **Plugins & Themes** (conditional): separate Oh My Zsh, Homebrew and plugin-manager
   configuration from installed prerequisites, nonportable state and external dotfile
-  ownership. Show this category only after Core functionality and relevant items
+  ownership. Qualify framework-owned plugin lists, theme selection and activation order
+  against the selected installed dependencies. Show this category only after Core functionality and relevant items
   exist. No silent installation, arbitrary sourcing or unmanaged overwrite.
 - [ ] Qualify each completed Shell slice with focused Core/native security,
   compatibility, conflict, approval and repeat/no-op cases. Final full application

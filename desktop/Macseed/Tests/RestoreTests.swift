@@ -248,7 +248,7 @@ import CryptoKit
         var withoutSkip = blockedPlan; withoutSkip.shellSkippedItems = nil
         precondition(!withoutSkip.plan.contains { withoutSkip.isItemLocalSkip($0) }, "Generic blocked rows never grant a local skip")
         var invalidSkip = blockedPlan; invalidSkip.shellSkippedItems = ["shell-script:" + blocked.selectedShellScripts[0].id]
-        do { try invalidSkip.validate(expected: blockedPlan.selection, catalog: blocked.inspection!.restoreSelection!); preconditionFailure("A planned operation cannot be marked skipped") }
+        do { try invalidSkip.validate(expected: blockedPlan.selection, catalog: blocked.inspection!.restoreSelection!, shellStateVersion: blocked.inspection!.requiredFeatures?["shell-state"]); preconditionFailure("A planned operation cannot be marked skipped") }
         catch { precondition(error is CoreRuntimeError) }
         blocked.requestRebuild(); blocked.confirmRebuild(); await blocked.waitForCompletion()
         precondition(blocked.state == .result && blocked.executionResult?.outcome == .attention)

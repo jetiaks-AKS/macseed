@@ -35,6 +35,9 @@ struct CoreSecureRestoreEvidence {
 
 // Existing Protocol V1 projections only. No Bundle parsing or planning in Swift.
 struct CoreRestoreInspection: Decodable {
+    var requiredFeatures: [String: Int]? = nil
+    var shellFunctionalCounts: [String: Int]? = nil
+    var restoreSupported: Bool? = nil
     var shellScriptCandidates: [CoreShellScript]? = nil
     let formatVersion: Int
     let selectedCategories: [String]
@@ -42,6 +45,9 @@ struct CoreRestoreInspection: Decodable {
     let secureComponent: Bool
     let restoreSelection: Inventory?
     enum CodingKeys: String, CodingKey {
+        case shellFunctionalCounts = "shell_functional_counts"
+        case requiredFeatures = "required_features"
+        case restoreSupported = "restore_supported"
         case shellScriptCandidates = "shell_script_candidates"
         case formatVersion = "format_version", selectedCategories = "selected_categories"
         case selectedItemCounts = "selected_item_counts", secureComponent = "secure_component", restoreSelection = "restore_selection"
@@ -70,8 +76,20 @@ struct CoreRestoreInspection: Decodable {
     struct Item: Decodable, Identifiable {
         let itemID: String
         let label: String
+        var environment: CoreCaptureInventoryRow.Item.EnvironmentDetail? = nil
         var id: String { itemID }
-        enum CodingKeys: String, CodingKey { case itemID = "item_id", label }
+        enum CodingKeys: String, CodingKey { case itemID = "item_id", label, environment }
+    }
+    static func supportsBundleFeatures(_ features: [String: Int]?) -> Bool {
+        (features ?? [:]).allSatisfy { key, version in
+            switch key {
+            case "shell-state": [1, 2].contains(version)
+            case "workspace-topology", "vscode-workspaces": version == 1
+            case "shell-aliases": (1...5).contains(version)
+            case "ssh-configuration": version == 2
+            default: false
+            }
+        }
     }
     func validate() throws {
         try CoreShellScript.validateCandidates(shellScriptCandidates,
@@ -89,6 +107,20 @@ struct CoreRestoreInspection: Decodable {
               Set(catalog.groups.flatMap(\.domains)) == Set(catalog.inventory.map(\.id)),
               catalog.groups.flatMap(\.domains).count == catalog.inventory.count else {
             throw CoreRuntimeError.malformedEvent
+        }
+        let shell = catalog.inventory.first { $0.id == "shell-zsh" }?.items ?? []
+        let declarations = shell.filter { CoreCaptureInventoryRow.Item.isEnvironmentID($0.id) }
+        guard Self.supportsBundleFeatures(requiredFeatures),
+              (requiredFeatures?["shell-state"] == 2) == !declarations.isEmpty,
+              declarations.allSatisfy({ $0.label.utf8.count <= 160 && !$0.label.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+                  && $0.environment?.valid != false }) else { throw CoreRuntimeError.malformedEvent }
+        if !declarations.isEmpty {
+            let files = Set((shellScriptCandidates ?? []).map(\.id))
+            let ids = Set(shell.map(\.id))
+            let fileItems = Set(files.map { "shell-script:" + $0 })
+            guard fileItems.isSubset(of: ids), selectedItemCounts["shell-zsh"] == ids.count,
+                  shellFunctionalCounts == CoreCaptureCounts.shell(items: ids.subtracting(fileItems), scripts: files)
+                else { throw CoreRuntimeError.malformedEvent }
         }
     }
 }
@@ -397,18 +429,32 @@ struct CoreRestorePreparation: Decodable {
             && ["cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required"].contains(row.reason ?? "")
             && readiness.conditions.contains { $0.isItemLocal && $0.domain == row.domain && $0.code == row.reason }
     }
-    func validate(expected: CoreRestoreSelection, catalog: CoreRestoreInspection.Inventory, expectedIncludeSecure: Bool = false) throws {
+    func validate(expected: CoreRestoreSelection, catalog: CoreRestoreInspection.Inventory, expectedIncludeSecure: Bool = false, shellStateVersion: Int? = nil) throws {
         try CoreShellScript.validate(shellScripts)
         try CoreShellScript.validateCandidates(shellScriptCandidates, aliases: Set(expected.items["shell-zsh"] ?? []))
         if let shellSkippedItems {
-            let selected = Set(expected.items["shell-zsh"] ?? [])
-                .union((shellScriptCandidates ?? []).map { "shell-script:" + $0.id })
-            guard shellSkippedItems.count <= 384, Set(shellSkippedItems).count == shellSkippedItems.count,
-                  shellSkippedItems.allSatisfy({ id in
-                      selected.contains(id) && id.range(of: "^shell-(alias|script):[0-9a-f]{64}\\z", options: .regularExpression) != nil
-                        && plan.filter({ $0.domain == "shell-zsh" && $0.itemID == id }).count == 1
-                        && plan.contains { $0.itemID == id && isItemLocalSkip($0) }
+            let items = Set(expected.items["shell-zsh"] ?? [])
+            let typed = shellStateVersion == 2 && items.contains(where: CoreCaptureInventoryRow.Item.isEnvironmentID)
+            // A narrowed v2 selection contains B5 declarations. Legacy v5 inspection
+            // has no shell-state version. Only the latter producer emits Script skips.
+            guard typed || shellStateVersion == nil,
+                  shellSkippedItems.count <= (typed ? 512 : 256 + 128) else { throw CoreRuntimeError.malformedEvent }
+            let candidates = Set((shellScriptCandidates ?? []).map(\.id))
+            let files = Set((shellScriptSelection.map { candidates.intersection($0) } ?? candidates).map { "shell-script:" + $0 })
+            let skips = Set(shellSkippedItems)
+            guard skips.count == shellSkippedItems.count,
+                  skips.filter({ $0.hasPrefix("shell-alias:") }).count <= 256,
+                  skips.allSatisfy({ id in
+                      if !typed && files.contains(id) { return true }
+                      guard items.contains(id) else { return false }
+                      if typed && CoreCaptureInventoryRow.Item.isEnvironmentID(id) { return true }
+                      let pattern = typed ? "^shell-(alias|function):[0-9a-f]{64}\\z" : "^shell-alias:[0-9a-f]{64}\\z"
+                      return id.range(of: pattern, options: .regularExpression) != nil
                   }) else { throw CoreRuntimeError.malformedEvent }
+            let rows = plan.filter { $0.domain == "shell-zsh" && skips.contains($0.itemID) }
+            guard rows.count == skips.count, Set(rows.map(\.itemID)) == skips,
+                  rows.allSatisfy({ $0.action == "none" && ["blocked", "conflict", "unknown"].contains($0.disposition) })
+            else { throw CoreRuntimeError.malformedEvent }
         }
         if let shellScriptSelection {
             guard shellScriptSelection.count <= 128, Set(shellScriptSelection).count == shellScriptSelection.count,

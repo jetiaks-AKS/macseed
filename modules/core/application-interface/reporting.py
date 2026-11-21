@@ -102,7 +102,7 @@ def opaque(subject):
 
 
 def item(domain, subject):
-    if domain == 'shell-zsh' and re.fullmatch(r'shell-(?:alias|script|function):[0-9a-f]{64}', subject):
+    if domain == 'shell-zsh' and re.fullmatch(r'shell-(?:alias|script|function|variable|path-operation|initializer):[0-9a-f]{64}', subject):
         return subject
     if domain == 'ssh-configuration' and subject == 'identity-references':
         return subject  # A public coverage label, never a Host or private path.

@@ -22,7 +22,7 @@ class InvalidSelection(Exception):
 
 def identity(domain, source):
     if domain == 'shell-zsh':
-        return source if re.fullmatch(r'shell-(?:alias|script|function):[0-9a-f]{64}', source) else bundle.shell_contract().identity(source)
+        return source if re.fullmatch(r'shell-(?:alias|script|function|variable|path-operation|initializer):[0-9a-f]{64}', source) else bundle.shell_contract().identity(source)
     if domain == 'vscode-workspaces':
         return source
     return 'restore:' + hashlib.sha256((domain + '\0' + source).encode()).hexdigest()
@@ -57,6 +57,7 @@ def inventory(files):
     rows = []
     sources = {}
     shell_names = {}
+    environment_details = {}
     for domain in (*bundle.SELECTABLE_ITEMS, *bundle.CATEGORIES):
         items = sections.get(domain, [])
         if domain == 'ssh-configuration' and categories[domain]:
@@ -66,6 +67,7 @@ def inventory(files):
             if typed is not None:
                 items = [r['id'] for r in typed._value['items']]
                 shell_names = {r['id']: r['key'] for r in typed._value['items']}
+                environment_details = bundle.shell_state_contract().environment.requirement_details(typed)
             aliases = bundle.shell_aliases(files['generated/shell/zshrc.snapshot'], files)
             if aliases is not None:
                 items = [row['name'] for row in aliases['aliases']]
@@ -80,15 +82,22 @@ def inventory(files):
         item_mode = domain in bundle.SELECTABLE_ITEMS or (domain in ('ssh-configuration', 'shell-zsh') and bool(items))
         available = bool(items) if item_mode else categories[domain]
         display_label = ('Aliases & Functions' if item_mode else 'Settings') if domain == 'shell-zsh' else LABELS[domain]
+        entries = []
+        names = {'app-store': app_names, 'git-repositories': repository_names,
+                 'vscode-workspaces': workspace_names, 'shell-zsh': shell_names}.get(domain, {})
+        for key, value in sources[domain].items():
+            if domain == 'shell-zsh' and key in environment_details:
+                info = environment_details[key].copy()
+                entries.append(dict(item_id=key, label=info.pop('label'), environment=info))
+            else:
+                entries.append(dict(item_id=key, label=label(names.get(value, value), domain)))
         rows.append({'domain': domain, 'label': display_label,
                      'selection_mode': 'items' if item_mode else 'category',
                      'availability': 'available' if available else 'unavailable',
                      'capture_selected': bool(categories.get(domain, False) or sections.get(domain, [])),
                      'source_present': 'generated/' + (bundle.SELECTABLE_ITEMS.get(domain) or bundle.CATEGORIES[domain]) in files,
                      'reason': None if available else 'no_selectable_content',
-                     'items': [{'item_id': key, 'label': label(app_names.get(value, value) if domain == 'app-store' else
-                                repository_names.get(value, value) if domain == 'git-repositories' else
-                                workspace_names.get(value, value) if domain == 'vscode-workspaces' else shell_names.get(value, value) if domain == 'shell-zsh' else value, domain)} for key, value in sources[domain].items()]})
+                     'items': entries})
     return {'groups': [{'id': group, 'domains': list(domains)} for group, domains in bundle.GROUPS.items()],
             'inventory': rows}, sources
 

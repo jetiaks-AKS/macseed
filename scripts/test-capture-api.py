@@ -112,6 +112,348 @@ _Task._launch = _fixture_ignored_constraint
             self.assertNotIn(bundle.shell_state_contract().DEFINITIONS, files)
             self.assertEqual([a['name'] for a in bundle.shell_aliases(files[bundle.shell_state_contract().SNAPSHOT])['aliases']], ['legacy'])
 
+    def test_mixed_capture_binds_inventory_members_and_shell_source(self):
+        source, _, _, _ = self.functions_fixture()
+        if not self.functions_enforced:
+            self.skipTest('Requires enforced parser launch')
+        source.write_text('demo() { :; }\nexport EDITOR=nvim\n')
+        mas = self.root / 'bin/mas'
+        mas.write_text('#!/bin/bash\n[[ "$1" == list ]] || exit 2\ncat "$HOME/apps"\n')
+        apps = self.home / 'apps'
+        first, second = '12345 Fixture One (1)\n', '67890 Fixture Two (2)\n'
+        apps.write_text(first + second)
+        options = dict(shell_environment=True)
+        def prepare(selection=None):
+            run, events = self.invoke_capture(selection=selection, extra=options)
+            self.assertEqual(run.returncode, 0, events[-1])
+            return events[-2]['data']
+        def execute(selection, prepared, target):
+            return self.invoke_capture('capture_execute', selection, dict(options, destination=str(target),
+                expected_prepared_capture_id=prepared['prepared_capture_id']))
+
+        shell = next(row for row in prepare()['inventory'] if row['domain'] == 'shell-zsh')
+        env = next(row['item_id'] for row in shell['items'] if 'environment' in row)
+        function = next(row['item_id'] for row in shell['items'] if row['label'] == 'demo')
+        options['shell_plaintext_ids'] = [env]
+        mixed = dict(categories=['homebrew-packages', 'app-store'], items={'shell-zsh': [function, env]}, secure_identities=[])
+        approved = prepare(mixed)
+        apps.write_text(second + first)
+        target = self.root / 'mixed.mbt'
+        run, events = execute(mixed, approved, target)
+        self.assertEqual(run.returncode, 0, events[-1])
+        self.assertTrue(bundle.inspect_bundle(target, str(self.home))['restore_supported'])
+
+        b5 = dict(categories=[], items={'shell-zsh': [env]}, secure_identities=[])
+        approved = prepare(b5)
+        only = self.root / 'b5.mbt'
+        run, events = execute(b5, approved, only)
+        self.assertEqual(run.returncode, 0, events[-1])
+        self.assertTrue(bundle.inspect_bundle(only, str(self.home))['restore_supported'])
+        refused = self.root / 'refused.mbt'
+        for change in ('membership', 'source'):
+            if change == 'membership':
+                apps.write_text(first)
+            else:
+                apps.write_text(first + second)
+                source.write_text('demo() { :; }\nexport EDITOR=vim\n')
+            run, events = execute(b5, approved, refused)
+            self.assertEqual((run.returncode, events[-1]['data']['code']), (2, 'stale_prepared_capture'))
+            self.assertFalse(events[-1]['data']['publication_occurred'])
+            self.assertFalse(refused.exists())
+
+    def test_environment_capture_mixed_selection_privacy_and_archive_gate(self):
+        source, _, _, _ = self.functions_fixture()
+        if not self.functions_enforced:
+            self.assert_functions_unavailable(dict(categories=[], items={'shell-zsh': [
+                bundle.shell_state_contract().identity('function', 'complex')]}, secure_identities=[]))
+            return
+        (self.home / '.zprofile').write_text('eval "$(/opt/homebrew/bin/brew shellenv zsh)"\n')
+        source.write_text('EDITOR() { :; }\nexport EDITOR=nvim\nexport PATH="$HOME/.local/bin:$PATH"\n'
+                          'COLOR=ghp_0123456789abcdefghijklmno\n')
+        option = dict(shell_environment=True)
+        def capture(selection=None, **extra):
+            run, events = self.invoke_capture(selection=selection, extra={**option, **extra})
+            self.assertEqual(run.returncode, 0, events[-1])
+            self.assertNotIn(b'ghp_', run.stdout + run.stderr)
+            return events[-2]['data']
+        scan = capture()
+        entries = next(r['items'] for r in scan['inventory'] if r['domain'] == 'shell-zsh')
+        env = {r['label']: r['item_id'] for r in entries if 'environment' in r}
+        self.assertEqual(set(env), {'PATH — Add ~/.local/bin first', 'EDITOR — Preferred text editor',
+                                    'Homebrew — Initialize shell environment'})
+        self.assertIn('restricted_content', scan['shell_environment']['exclusions'])
+        function = next(r['item_id'] for r in entries if r['label'] == 'EDITOR')
+        selection = dict(categories=[], items={'shell-zsh': [function, *env.values()]}, secure_identities=[])
+        run, events = self.invoke_capture(selection=selection, extra=option)
+        self.assertEqual((run.returncode, events[-1]['data']['code']), (2, 'shell_plaintext_consent_required'))
+        path_id = env['PATH — Add ~/.local/bin first']
+        only = capture(dict(selection, items={'shell-zsh': [path_id]}), shell_plaintext_ids=[path_id])
+        self.assertEqual(only['summary'], dict(selected_domains=1, selected_items=1, secure_identity_count=0))
+        pre = capture(selection, shell_plaintext_ids=list(env.values()))
+        self.assertEqual(pre['summary'], dict(selected_domains=2, selected_items=4, secure_identity_count=0))
+        target = self.root / 'environment.mbt'
+        run, events = self.invoke_capture('capture_execute', selection, dict(**option, shell_plaintext_ids=list(env.values()),
+            destination=str(target), expected_prepared_capture_id=pre['prepared_capture_id']))
+        self.assertEqual(run.returncode, 0, events[-1])
+        files = bundle.validate_archive(target)
+        self.assertFalse(any(b'ghp_' in raw for raw in files.values()))
+        snapshot = bundle.typed_shell(files)
+        self.assertEqual(snapshot._value['schema'], 2)
+        self.assertEqual(bundle.shell_state_contract().select(snapshot, [function])._value['schema'], 1)
+        self.assertTrue(bundle.inspect_bundle(target, str(self.home))['restore_supported'])
+        run, events = self.function_core('bundle_inspect', target)
+        self.assertEqual(run.returncode, 0, events)
+        inspected = events[-2]['data']
+        self.assertTrue(inspected['restore_supported'])
+        self.assertEqual(inspected['shell_functional_counts'], dict(aliases_functions=1, variables_path=3, scripts=0))
+        inventory = next(r for r in inspected['restore_selection']['inventory'] if r['domain'] == 'shell-zsh')
+        self.assertEqual({r['item_id'] for r in inventory['items']}, {function, *env.values()})
+        script = self.home / 'Scripts' / 'count-fixture'
+        script.parent.mkdir(mode=0o700, exist_ok=True)
+        script.write_text('#!/bin/sh\necho fixture\n')
+        script.chmod(0o700)
+        script_id = bundle.shell_contract().recovery_contract().script_id('Scripts/count-fixture')
+        policy = dict(shell_plaintext_ids=list(env.values()), shell_script_policy='opaque-file-v5',
+                      shell_script_paths=[str(script)], shell_script_selection=[script_id])
+        mixed = capture(selection, **policy)
+        self.assertEqual(mixed['summary'], dict(selected_domains=3, selected_items=5, secure_identity_count=0))
+        target = self.root / 'all-shell-groups.mbt'
+        run, events = self.invoke_capture('capture_execute', selection, dict(option, **policy, shell_script_ids=[script_id],
+            destination=str(target), expected_prepared_capture_id=mixed['prepared_capture_id']))
+        self.assertEqual(run.returncode, 0, events[-1])
+        saved = events[-2]['data']['bundle']
+        self.assertEqual(saved, bundle.inspect_bundle(target, str(self.home)))
+        self.assertEqual(saved['selected_item_counts'], dict.fromkeys(bundle.ITEMS, 0) | {'shell-zsh': 5})
+        self.assertEqual(saved['shell_functional_counts'], dict(aliases_functions=1, variables_path=3, scripts=1))
+        # Inspect the mixed reference without the excluded assignment. An
+        # unavailable provider or a target override belongs to the initializer.
+        source.write_text('EDITOR() { :; }\nexport EDITOR=nvim\nexport PATH="$HOME/.local/bin:$PATH"\n')
+        overrides = self.home / '.homebrew'
+        overrides.mkdir(mode=0o700, exist_ok=True)
+        (overrides / 'brew.env').write_text('# local override\n')
+        run, events = self.function_core('environment_compare', target)
+        self.assertEqual(run.returncode, 0, events[-1])
+        compared = events[-2]['data']
+        self.assertEqual({r['item_id']: r['comparison_kind'] for r in compared['comparison_records']},
+                         {function: 'matching', path_id: 'matching', 'shell-script:' + script_id: 'matching',
+                          env['EDITOR — Preferred text editor']: 'matching',
+                          env['Homebrew — Initialize shell environment']: 'unverified'})
+        self.assertEqual(compared['comparison']['counts']['unresolved'], 0)
+        scope, = (r for r in compared['records']['coverage_records'] if r['domain'] == 'shell-zsh' and r['item_id'] == 'scope')
+        self.assertEqual((scope['disposition'], scope['source_status']), ('resolved', 'partial'))
+        self.assertEqual([r['code'] for r in compared['records']['diagnostics'] if r['record_id'] == scope['record_id']],
+                         ['shell_activation_unknown'])
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_environment_production_recovery(self):
+        startup, _, resources, chosen = self.functions_fixture()
+        if not self.functions_enforced:
+            self.assert_functions_unavailable(chosen)
+            return
+        startup.write_bytes(b'export WORK_ROOT="$HOME/work"\npath=("$WORK_ROOT/bin" $path)\n'
+                            b"alias listing='ls -la'\n")
+        options = dict(shell_environment=True)
+        result, events = self.invoke_capture(extra=options)
+        self.assertEqual(result.returncode, 0, events[-1])
+        inventory = next(r for r in events[-2]['data']['inventory'] if r['domain'] == 'shell-zsh')['items']
+        ids = [r['item_id'] for r in inventory if r.get('environment') or r['label'] == 'listing']
+        env_ids = [i for i in ids if not i.startswith('shell-alias:')]
+        self.assertEqual((len(ids), len(env_ids)), (3, 2))
+        capture = dict(categories=[], items={'shell-zsh': sorted(ids)}, secure_identities=[])
+        options['shell_plaintext_ids'] = env_ids
+        result, events = self.invoke_capture(selection=capture, extra=options)
+        self.assertEqual(result.returncode, 0, events[-1])
+        archive = self.root / 'shell.mbt'
+        result, events = self.invoke_capture('capture_execute', capture, dict(options, destination=str(archive),
+            expected_prepared_capture_id=events[-2]['data']['prepared_capture_id']))
+        self.assertEqual(result.returncode, 0, events[-1])
+        environment_archive = self.root / 'variables-only.mbt'
+        environment_selection = dict(categories=[], items={'shell-zsh': sorted(env_ids)}, secure_identities=[])
+        result, events = self.invoke_capture(selection=environment_selection, extra=options)
+        self.assertEqual(result.returncode, 0, events[-1])
+        result, events = self.invoke_capture('capture_execute', environment_selection, dict(options, destination=str(environment_archive),
+            expected_prepared_capture_id=events[-2]['data']['prepared_capture_id']))
+        self.assertEqual(result.returncode, 0, events[-1])
+        target = self.root / 'target-home'
+        target.mkdir(mode=0o700)
+        self.home = target
+        self.environment.update(HOME=str(target), MACSEED_DESKTOP_BUNDLE=str(resources.parent.parent))
+        (self.root / 'bin/sudo').write_text('#!/bin/bash\nexit 0\n')
+        (self.project / 'bin').mkdir()
+        shutil.copy2(ROOT / 'bin/bs', self.project / 'bin/bs')
+        shutil.copy2(ROOT / 'scripts/install-bs.sh', self.project / 'scripts/install-bs.sh')
+        (self.root / 'bin/bs').symlink_to(self.project / 'bin/bs')
+        self.environment['BS_INSTALL_DIR'] = str(self.root / 'bin')
+        for selected, archive in [(env_ids, environment_archive), (ids, archive), (ids, archive)]:
+            selection = dict(categories=[], items={'shell-zsh': sorted(selected)})
+            result, events = self.function_core('restore_prepare', archive, selection=selection)
+            self.assertEqual(result.returncode, 0, events[-1])
+            prepared = events[-2]['data']
+            complete = (target / '.zshrc').exists() and (target / '.zshrc').read_bytes() == startup.read_bytes()
+            self.assertEqual(prepared['has_executable_changes'], not complete, prepared['plan'])
+            stamp = (target / '.zshrc').stat() if complete else None
+            result, events = self.function_core('restore_execute', archive, selection=selection, prepared=prepared['prepared_plan_id'])
+            self.assertEqual(result.returncode, 0, events[-1])
+            facts = events[-2]['data']['verification']['details']['verification_records']
+            self.assertEqual({r['item_id'] for r in facts if r['conformity'] == 'verified'}, set(selected))
+            self.assertTrue({'variable_declaration', 'path_operation'} <= {r['predicate'] for r in facts})
+            if complete:
+                after = (target / '.zshrc').stat()
+                self.assertEqual((after.st_ino, after.st_mtime_ns), (stamp.st_ino, stamp.st_mtime_ns))
+        result, events = self.function_core('environment_compare', archive)
+        self.assertEqual(result.returncode, 0, events[-1])
+        self.assertEqual({r['item_id'] for r in events[-2]['data']['comparison_records'] if r['comparison_kind'] == 'matching'}, set(ids))
+        # The consumer bytes survive removal of the preceding assignment.
+        # Check observes the unresolved binding. Preview supplies it once.
+        retained = startup.read_bytes().split(b'\n', 1)[1]
+        (target / '.zshrc').write_bytes(retained)
+        result, events = self.function_core('environment_compare', archive)
+        self.assertEqual(result.returncode, 0, events[-1])
+        kinds = {r['item_id']: r['comparison_kind'] for r in events[-2]['data']['comparison_records']}
+        for item in env_ids:
+            self.assertEqual(kinds[item], 'unverified' if item.startswith('shell-path-operation:') else 'missing')
+        result, events = self.function_core('restore_prepare', archive, selection=selection)
+        self.assertEqual(result.returncode, 0, events[-1])
+        prepared = events[-2]['data']
+        self.assertEqual({r['item_id'] for r in prepared['plan'] if r['disposition'] == 'planned'}, set(env_ids))
+        self.assertEqual((target / '.zshrc').read_bytes(), retained)
+        result, events = self.function_core('restore_execute', archive, selection=selection, prepared=prepared['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events[-1])
+        self.assertEqual((target / '.zshrc').read_bytes(), startup.read_bytes())
+        # An independent missing alias can be restored while the conflicting
+        # binding and its dependent PATH operation stay visible and untouched.
+        conflict = b'export WORK_ROOT="$HOME/other"\n'
+        (target / '.zshrc').write_bytes(conflict)
+        result, events = self.function_core('restore_prepare', archive, selection=selection)
+        self.assertEqual(result.returncode, 0, events[-1])
+        prepared = events[-2]['data']
+        self.assertEqual(set(prepared['shell_skipped_items']), set(env_ids))
+        result, events = self.function_core('restore_execute', archive, selection=selection, prepared=prepared['prepared_plan_id'])
+        self.assertIn(result.returncode, (0, 1), events[-1])
+        self.assertEqual((target / '.zshrc').read_bytes(), conflict + b"alias listing='ls -la'\n")
+        facts = events[-2]['data']['verification']['details']['verification_records']
+        self.assertEqual({r['item_id'] for r in facts if r['conformity'] == 'verified'}, set(ids) - set(env_ids))
+
+    def test_environment_recovery_after_selected_tail_removal(self):
+        self.mixed_tail_recovery(b'export PROFILE_BASE=yes\n')
+
+    def test_environment_narrow_saved_tail_recovery(self):
+        self.mixed_tail_recovery(b'export PROFILE_BASE=yes\n', 'capture')
+
+    def test_environment_narrow_restore_tail_recovery(self):
+        self.mixed_tail_recovery(b'export PROFILE_BASE=yes\n', 'restore')
+
+    def mixed_tail_recovery(self, profile_baseline, narrow=None):
+        startup, _, resources, chosen = self.functions_fixture()
+        if not self.functions_enforced:
+            self.assert_functions_unavailable(chosen)
+            return
+        (self.home / '.zshenv').unlink()
+        profile = self.home / '.zprofile'
+        baseline = {profile: profile_baseline,
+                    startup: b'eval "$(prompt-tool init zsh)"\nexport PATH="$HOME/bin:$PATH"\nsetopt interactivecomments\n'}
+        additions = {profile: [b'export FIXTURE_LOGIN=yes'],
+                     startup: [b'export FIXTURE_BIN="$HOME/tools"', b'export PATH="$FIXTURE_BIN:$PATH"',
+                               b"alias fixture_one='pwd'", b"alias fixture_two='dirs'", b'fixture_fn() { :; }']}
+        for path, raw in baseline.items():
+            path.write_bytes(raw + b'\n# excluded source comment\n' + b'\n\n'.join(additions[path]) + b'\n')
+            path.chmod(0o600)
+        folder = self.home / 'Scripts'
+        folder.mkdir(mode=0o700)
+        scripts = [folder / 'first', folder / 'second']
+        for script in scripts:
+            script.write_bytes(b'#!/bin/sh\ntouch "$HOME/must-not-run"\n')
+            script.chmod(0o700)
+        def success(call):
+            result, events = call
+            self.assertEqual(result.returncode, 0, events[-1])
+            return events[-2]['data']
+        policy = dict(shell_environment=True, shell_script_policy='opaque-file-v5',
+                      shell_script_paths=list(map(str, scripts)))
+        inventory = success(self.invoke_capture(extra=dict(shell_environment=True)))['inventory']
+        rows = next(r['items'] for r in inventory if r['domain'] == 'shell-zsh')
+        ids = [r['item_id'] for r in rows if not r['item_id'].startswith('shell-script:')]
+        self.assertEqual(len(ids), 8)
+        script_ids = sorted(bundle.shell_contract().recovery_contract().script_id('Scripts/' + p.name) for p in scripts)
+        policy.update(shell_script_selection=script_ids, shell_plaintext_ids=[r['item_id'] for r in rows if r.get('environment')])
+        contract = bundle.shell_state_contract()
+        baseline_ids = set()
+        for path, statement in ((profile, profile_baseline.strip()), (startup, baseline[startup].splitlines()[1])):
+            kind, name, intent = contract.environment.classify(statement.decode())
+            start = baseline[path].index(statement)
+            baseline_ids.add(contract.item_identity(dict(kind=kind, key=name, source=contract.source_identity(path.name),
+                details=dict(ordinal=0, span=[start, start + len(statement)], intent=intent))))
+        self.assertTrue(baseline_ids <= set(ids))
+        if narrow == 'capture':
+            ids = [key for key in ids if key not in baseline_ids]
+            policy['shell_plaintext_ids'] = [key for key in policy['shell_plaintext_ids'] if key in ids]
+        selected = dict(categories=[], items={'shell-zsh': sorted(ids)}, secure_identities=[])
+        archive = self.root / 'selected-tails.mbt'
+        prepared = success(self.invoke_capture(selection=selected, extra=policy))['prepared_capture_id']
+        success(self.invoke_capture('capture_execute', selected, dict(policy, destination=str(archive),
+            shell_script_ids=script_ids, expected_prepared_capture_id=prepared)))
+        self.environment['MACSEED_DESKTOP_BUNDLE'] = str(resources.parent.parent)
+        (self.root / 'bin/sudo').write_text('#!/bin/bash\nexit 0\n')
+        (self.project / 'bin').mkdir()
+        shutil.copy2(ROOT / 'bin/bs', self.project / 'bin/bs')
+        shutil.copy2(ROOT / 'scripts/install-bs.sh', self.project / 'scripts/install-bs.sh')
+        (self.root / 'bin/bs').symlink_to(self.project / 'bin/bs')
+        self.environment['BS_INSTALL_DIR'] = str(self.root / 'bin')
+        snapshot = bundle.typed_shell(bundle.validate_archive(archive))
+        all_ids = {r['id'] for r in snapshot._value['items']}
+        retained = {r['id'] for r in snapshot._value['items'] if r['kind'] != 'script' and
+                    bundle.shell_state_contract().content(snapshot, r) in baseline[profile] + baseline[startup]}
+        self.assertEqual((len(all_ids), len(retained)), (8, 0) if narrow == 'capture' else (10, 2))
+        recovery_ids = all_ids - retained if narrow == 'restore' else all_ids
+        selection = dict(categories=[], items={'shell-zsh': sorted(recovery_ids)})
+        def check():
+            records = success(self.function_core('environment_compare', archive))['comparison_records']
+            return {r['item_id']: r['comparison_kind'] for r in records}
+        def preview():
+            return success(self.function_core('restore_prepare', archive, selection=selection, scripts=script_ids))
+        def execute(plan, approvals):
+            return self.function_core('restore_execute', archive, selection=selection, scripts=script_ids,
+                                      approvals=approvals, prepared=plan['prepared_plan_id'])
+        self.assertEqual(check(), dict.fromkeys(all_ids, 'matching'))
+        held = self.root / 'held'
+        held.mkdir(mode=0o700)
+        for script in scripts:
+            script.rename(held / script.name)
+        for path, raw in baseline.items():
+            path.write_bytes(raw)
+        missing = all_ids - retained
+        self.assertEqual(check(), dict.fromkeys(retained, 'matching') | dict.fromkeys(missing, 'missing'))
+        plan = preview()
+        self.assertEqual({r['item_id']: r['disposition'] for r in plan['plan'] if r['item_id'] != 'scope'},
+                         dict.fromkeys(retained & recovery_ids, 'satisfied') | dict.fromkeys(missing, 'planned'))
+        # A source edit between Prepare and Execute invalidates both script and declaration work.
+        startup.write_bytes(baseline[startup] + b'# edited\n')
+        result, events = execute(plan, script_ids)
+        self.assertEqual((result.returncode, events[-1]['data']['code']), (2, 'stale_plan'))
+        self.assertTrue(all(not script.exists() for script in scripts))
+        self.assertEqual(profile.read_bytes(), baseline[profile])
+        startup.write_bytes(baseline[startup])
+        plan = preview()
+        result, events = execute(plan, script_ids[:1])
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(events[-1]['data']['publication_started'])
+        verified = success(execute(plan, script_ids))['verification']['details']['verification_records']
+        self.assertEqual({r['item_id'] for r in verified if r['conformity'] == 'verified'}, recovery_ids)
+        self.assertEqual(check(), dict.fromkeys(all_ids, 'matching'))
+        for path, raw in baseline.items():
+            self.assertEqual(path.read_bytes(), raw + b'\n'.join(additions[path]) + b'\n')
+        for path in scripts:
+            self.assertEqual(path.read_bytes(), (held / path.name).read_bytes())
+            self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+        def stamps():
+            return [(p.read_bytes(), p.stat().st_ino, p.stat().st_mtime_ns) for p in [profile, startup, *scripts]]
+        before = stamps()
+        repeat = preview()
+        self.assertFalse(repeat['has_executable_changes'])
+        success(execute(repeat, []))
+        self.assertEqual(stamps(), before)
+        self.assertFalse((self.home / 'must-not-run').exists())
+
     def test_functions_production_capture_bundle_exact_bytes_and_inspection(self):
         source, original, package, chosen = self.functions_fixture()
         if not self.functions_enforced:
@@ -458,11 +800,11 @@ _Task._launch = _fixture_ignored_constraint
         rows = events[-2]['data']['plan']
         self.assertEqual(sum(r['disposition'] == 'conflict' for r in rows), 1)
         self.assertEqual(sum(r['disposition'] == 'satisfied' for r in rows), 3)
-        self.assertEqual(next(r for r in rows if r['item_id'] == 'scope')['disposition'], 'warning')
+        self.assertEqual(next(r for r in rows if r['item_id'] == 'scope')['disposition'], 'information')
         result, events = self.function_core('environment_compare', archive)
         self.assertEqual(result.returncode, 0, events)
         counts = events[-2]['data']['comparison']['counts']
-        self.assertEqual((counts['matching'], counts['differing'], counts['unverified'], counts['unresolved']), (3, 1, 0, 1))
+        self.assertEqual((counts['matching'], counts['differing'], counts['unverified'], counts['unresolved']), (3, 1, 0, 0))
         self.assertEqual(target.read_bytes(), conflict)
         target.chmod(0o666)
         result, events = self.function_core('environment_compare', archive)
@@ -1037,6 +1379,39 @@ _Task._launch = _fixture_ignored_constraint
                 expected_physical = (12 if aliases else 0) + len(scripts - ({linked} if aliases else set()))
                 self.assertEqual(publication['selected_item_counts'].get('shell-zsh', 0), expected_physical)
                 self.assertEqual(publication, bundle.inspect_bundle(destination, str(self.home)))
+
+    def test_restore_manifest_typed_selection_bounds(self):
+        recovery = bundle.shell_contract().recovery_contract()
+        state = bundle.shell_state_contract()
+        private = self.root / 'typed-request'
+        private.mkdir(mode=0o700)
+        manifest = private / recovery.REQUEST_NAME
+
+        def expand(items, operation='restore_prepare'):
+            raw = json.dumps(dict(operation_id='boundary', version=5, parameters=dict(shell_items=items))).encode()
+            manifest.write_bytes(raw)
+            manifest.chmod(0o600)
+            selection = dict(categories=[], items={})
+            request = dict(operation=operation, operation_id='boundary', parameters=dict(
+                script_manifest=hashlib.sha256(raw).hexdigest(), selection=selection))
+            with patch.dict(os.environ, TMPDIR=str(private)):
+                recovery.expand_request(request, max_declarations=state.MAX_DECLARATIONS)
+            return selection['items']['shell-zsh']
+
+        aliases = [f'shell-alias:{i:064x}' for i in range(256)]
+        variables = [f'shell-variable:{i:064x}' for i in range(256)]
+        files = [f'shell-script:{i:064x}' for i in range(128)]
+        maximum = aliases + variables + files
+        for items in (aliases + files, aliases + variables, maximum):
+            self.assertEqual(expand(items), items)
+        for items in (maximum + ['shell-function:' + 'a' * 64], aliases + variables + ['shell-variable:' + 'a' * 64],
+                      aliases + variables[:1] + files + ['shell-script:' + 'a' * 64],
+                      aliases + variables + ['shell-alias:' + 'a' * 64], maximum[:-1] + ['invalid'],
+                      maximum[:-1] + maximum[:1]):
+            with self.subTest(last=items[-1]), self.assertRaises(ValueError):
+                expand(items)
+        with self.assertRaises(ValueError):
+            expand(maximum, 'capture_prepare')
 
     def test_v5_request_manifest_maximum_selection_and_fail_closed(self):
         self.fixture(shell=True)
@@ -1753,9 +2128,14 @@ esac
 
     def test_partial_app_store_capture_retains_comparison_inventory(self):
         self.fixture()
-        (self.root / 'bin/mas').write_text('#!/bin/bash\nprintf "%s\\n" "12345 Fixture Selected (1.0)" "67890 Fixture Excluded (2.0)"\n')
+        inventory = self.root / 'bin/mas-list'
+        apps = ['12345 Fixture Selected (1.0)', '67890 Fixture Excluded (2.0)']
+        inventory.write_text('\n'.join(apps) + '\n')
+        (self.root / 'bin/mas').write_text('#!/bin/bash\ncat "${0%/*}/mas-list"\n')
         selection = dict(categories=[], items={'app-store': ['12345']}, secure_identities=[])
         prepared = self.prepare(selection)
+        # Enumeration order alone must preserve the prepared ID and completeness digest.
+        inventory.write_text('\n'.join(reversed(apps)) + '\n')
         result, events = self.execute(prepared['prepared_capture_id'], selection)
         self.assertEqual(result.returncode, 0, events)
         files = bundle.validate_archive(self.root / 'captured.mbt')

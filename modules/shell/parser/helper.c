@@ -47,6 +47,8 @@ typedef struct {
     uint32_t count, nodes, syntax_depth;
     uint64_t allocation_peak;
     Definition definitions[DEFINITION_COUNT];
+    uint32_t statement_count;
+    Span statements[DEFINITION_COUNT];
 } Result;
 static unsigned char source[INPUT_LIMIT + 1];
 static uint32_t source_length;
@@ -214,6 +216,14 @@ static void parse_worker(int output) {
         (void)span(node);
         if (++result.nodes > NODE_LIMIT) worker_fail(NODES);
         const char *kind = ts_node_type(node);
+        /* Whole outer sublists only. Conditions, function bodies, pipelines
+         * and substitutions never contribute independent inner statements. */
+        if (!strcmp(kind, "sublist") && depth == 2 &&
+            !strcmp(ts_node_type(ts_node_parent(node)), "list")) {
+            if (result.statement_count < DEFINITION_COUNT)
+                result.statements[result.statement_count++] = span(node);
+            else result.statement_count = DEFINITION_COUNT + 1;
+        }
         uint32_t nested = syntax[depth] + nesting_kind(kind);
         if (nested > SYNTAX_DEPTH) worker_fail(DEPTH);
         if (nested > result.syntax_depth) result.syntax_depth = nested;
@@ -401,6 +411,15 @@ static enum Failure encode(void) {
         for (uint32_t j = 0; j < d->name_count; j++)
             if (!append("%s[%u,%u]", j ? "," : "", d->names[j].start, d->names[j].end)) return OUTPUT;
         if (!append("]}")) return OUTPUT;
+    }
+    if (!append("],\"statements\":")) return OUTPUT;
+    if (result.statement_count > DEFINITION_COUNT)
+        return append("null}\n") ? OK : OUTPUT;
+    if (!append("[")) return OUTPUT;
+    for (uint32_t i = 0; i < result.statement_count; i++) {
+        Span unit = result.statements[i];
+        if (!valid_response_span(unit) || (i && unit.start < result.statements[i - 1].end)) return PROCESS;
+        if (!append("%s[%u,%u]", i ? "," : "", unit.start, unit.end)) return OUTPUT;
     }
     return append("]}\n") ? OK : OUTPUT;
 }

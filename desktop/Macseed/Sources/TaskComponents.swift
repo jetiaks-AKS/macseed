@@ -372,6 +372,9 @@ enum RestorePreviewHierarchy {
     }
     static func disclosureIDs(_ domains: [TaskDomainPresentation], settings: [TaskDomainPresentation]) -> Set<String> {
         var ids = TaskDomainList.disclosureIDs(domains, settings: settings)
+        if domains.contains(where: { $0.id == "shell-zsh" && $0.items.contains { CoreCaptureInventoryRow.Item.isEnvironmentID($0.sourceItemID ?? "") } }) {
+            ids.insert(DeveloperSelectionGroup.environmentID)
+        }
         ids.formUnion(DeveloperSelectionGroup.allCases.filter { group in domains.contains { DeveloperSelectionGroup.group(for: $0.id) == group } }.map(\.id))
         for section in sections(domains) where section.group != .otherFindings && section.group != .advanced {
             ids.insert(CaptureHierarchy.sectionID(section.group))
@@ -394,7 +397,7 @@ enum RestorePreviewHierarchy {
     }
     static func titleInset(_ id: String) -> CGFloat {
         if id == CoreRestorePreparation.secureDomain { return CaptureChildRowGrid.leadingInset + 12 }
-        let group = CaptureHierarchy.group(for: id)
+        let group = CaptureHierarchy.group(for: id == DeveloperSelectionGroup.environmentID ? "shell-zsh" : id)
         guard group != .otherFindings else { return 0 }
         return CaptureChildRowGrid.leadingInset + 12 * (group == .vscode ? 2 : 1)
     }
@@ -469,6 +472,8 @@ struct TaskDomainList: View {
                                 title: "For Experienced Users", expanded: treeExpansion)),
                             secureTransferGroup: captureSecureTransferGroup,
                             shellCustomCommands: domains.contains { $0.id == "shell-zsh" && $0.items.contains { ($0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-function:")) || $0.id.hasPrefix("shell-zsh:shell-script:") } },
+                            environmentStatus: captureEnvironmentDomain.map { AnyView(domainStatus($0)) },
+                            environmentItems: captureEnvironmentDomain.map { AnyView(domainContents($0).padding(.leading, CaptureChildRowGrid.leadingInset)) },
                             shellScripts: captureShellScripts.map { AnyView(captureScripts($0)) },
                             summary: { rows in
                                 if rows.contains(where: { [TaskRowState.attention, .unverified, .failed, .partial].contains($0.state) }) { return "Needs Attention" }
@@ -477,9 +482,9 @@ struct TaskDomainList: View {
                             attention: { $0.contains { [TaskRowState.attention, .unverified, .failed, .partial].contains($0.state) } ? "Needs Attention" : nil }) { domain in
                             if domain.id == "macos-settings", !settingsCategories.isEmpty {
                                 captureSettings(domain)
-                            } else if domain.id != "shell-zsh" || domain.items.contains(where: { ($0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-function:")) }) || captureShellScripts == nil {
+                            } else if domain.id != "shell-zsh" || domain.items.contains(where: { ($0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-function:")) }) || (captureShellScripts == nil && domain.items.contains(where: { !isEnvironmentItem($0) })) {
                                 domainRow(TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol,
-                                    items: domain.items.filter { !$0.id.hasPrefix("shell-zsh:shell-script:") }, activityState: domain.activityState, scopeInformation: domain.scopeInformation))
+                                    items: domain.items.filter { !$0.id.hasPrefix("shell-zsh:shell-script:") && !isEnvironmentItem($0) }, activityState: domain.activityState, scopeInformation: domain.scopeInformation))
                                     .padding(.leading, CaptureChildRowGrid.leadingInset + (domain.id == "shell-zsh" && domain.items.contains { ($0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-function:")) } ? CaptureReviewPresentation.hierarchyStep : 0))
                             }
                         }
@@ -551,11 +556,12 @@ struct TaskDomainList: View {
                             let fileItems = rows.flatMap(\.items).filter { $0.sourceItemID?.hasPrefix("shell-script:") == true }
                             let fileIDs = Set(fileItems.compactMap(\.sourceItemID))
                             let dependencyFiles = plannedShellScripts.filter { !fileIDs.contains("shell-script:" + $0.id) }
+                            let environment = rows.flatMap(\.items).filter { CoreCaptureInventoryRow.Item.isEnvironmentID($0.sourceItemID ?? "") }
                             let aliasRows = rows.map { domain in
-                                domain.id == "shell-zsh" && !fileItems.isEmpty
+                                domain.id == "shell-zsh" && (!fileItems.isEmpty || !environment.isEmpty)
                                     ? TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol,
-                                        items: domain.items.filter { $0.sourceItemID?.hasPrefix("shell-script:") != true }, scopeInformation: domain.scopeInformation, previewOnly: true) : domain
-                            }.filter { !$0.items.isEmpty }
+                                        items: domain.items.filter { $0.sourceItemID?.hasPrefix("shell-script:") != true && !CoreCaptureInventoryRow.Item.isEnvironmentID($0.sourceItemID ?? "") }, scopeInformation: domain.scopeInformation, previewOnly: true) : domain
+                            }.filter { !$0.items.isEmpty && ($0.id != "shell-zsh" || RestorePreviewVisibility.includes($0)) }
                             previewMembers(aliasRows, parentState: summary.state)
                             if group == .shell && (!RestorePreviewVisibility.items(fileItems).isEmpty || !dependencyFiles.isEmpty) {
                                 let fileDomain = TaskDomainPresentation(id: ShellCommandPresentation.scriptsID, title: "Scripts", symbol: "applescript", items: fileItems, previewOnly: true)
@@ -578,6 +584,10 @@ struct TaskDomainList: View {
                                         expanded: expandedIDs.contains(ShellCommandPresentation.scriptsID)).padding(.vertical, 6)
                                 }.disclosureGroupStyle(TaskDisclosureStyle(includesIndicator: false, contentTrailingInset: 0))
                                     .padding(.horizontal, 16).accessibilityIdentifier("restore.preview.shell-scripts")
+                            }
+                            if !RestorePreviewVisibility.items(environment).isEmpty {
+                                domainRow(TaskDomainPresentation(id: DeveloperSelectionGroup.environmentID, title: "Variables & PATH",
+                                    symbol: "list.bullet.rectangle", items: environment, previewOnly: true), previewParentState: summary.state)
                             }
                         }
                         if group != developerGroups.last { Divider().padding(.horizontal, 16) }
@@ -683,10 +693,24 @@ struct TaskDomainList: View {
             }.buttonStyle(.plain).foregroundStyle(.secondary)
         }
     }
+    private func isEnvironmentItem(_ item: TaskItemPresentation) -> Bool {
+        guard item.id.hasPrefix("shell-zsh:") else { return false }
+        return CoreCaptureInventoryRow.Item.isEnvironmentID(String(item.id.dropFirst("shell-zsh:".count)))
+    }
+
+    private var captureEnvironmentDomain: TaskDomainPresentation? {
+        guard let shell = domains.first(where: { $0.id == "shell-zsh" }) else { return nil }
+        let items = shell.items.filter(isEnvironmentItem)
+        guard !items.isEmpty else { return nil }
+        return TaskDomainPresentation(id: DeveloperSelectionGroup.environmentID, title: "Variables & PATH", symbol: "list.bullet.rectangle",
+            items: items, activityState: shell.activityState)
+    }
+
     private func captureDisclosureIDs(in scope: CaptureSelectionScope) -> Set<String> {
-        let shell = domains.contains { $0.id == "shell-zsh" && $0.items.contains { $0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-script:") } }
+        let shell = domains.contains { $0.id == "shell-zsh" && $0.items.contains { $0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-function:") || $0.id.hasPrefix("shell-zsh:shell-script:") } }
         return CaptureHierarchy.disclosureIDs(domains.map(\.id) + settingsCategories.map(\.id)
             + (shell ? [ShellCommandPresentation.commandsID] : [])
+            + (captureEnvironmentDomain == nil ? [] : [DeveloperSelectionGroup.environmentID])
             + (captureShellScripts == nil ? [] : [ShellCommandPresentation.scriptsID]), scope: scope)
     }
 

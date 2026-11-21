@@ -29,10 +29,11 @@ class Observation:
     snapshot is B1 evidence, not an eligibility decision. Source outcomes include
     missing/rejected units that cannot belong to a selected B1 snapshot.
     """
-    __slots__ = ('snapshot', '_files', '_issues', '_loads', 'uncertainties')
+    __slots__ = ('snapshot', '_files', '_issues', '_loads', '_roots', 'uncertainties')
 
-    def __init__(self, snapshot, files, issues, loads=()):
+    def __init__(self, snapshot, files, issues, loads=(), roots=()):
         self.snapshot, self._files, self._issues = snapshot, files, tuple(issues)
+        self._roots = tuple(roots)
         self._loads = tuple(loads)
         self.uncertainties = ('activation_unproven', 'function_calls_unresolved', 'alias_expansion_unresolved',
                               'script_invocation_and_consent_unresolved', 'external_configuration_unobserved')
@@ -257,7 +258,7 @@ def _equivalent(candidates, files, loads, context):
 
 
 def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: False, _ignore_pending=(), aliases=False,
-            independent=False, _additional_sources=()):
+            independent=False, _additional_sources=(), environment=False):
     """Observe only an explicit HOME and trusted Parser; never ambient ZDOTDIR.
 
     Contexts are hypothetical standard startup sequences. System startup files,
@@ -276,7 +277,7 @@ def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: 
         parser.preflight(cancelled=cancelled)
         with base.home_directory(home) as (_, stable):
             result = _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, _additional_sources,
-                              lambda path: sources.file_state(home, path, _ignore_pending, limit=state.MAX_SOURCE))
+                              lambda path: sources.file_state(home, path, _ignore_pending, limit=state.MAX_SOURCE), environment=environment)
             stable()
             return result
     except (Invalid, client.Invalid):
@@ -285,17 +286,17 @@ def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: 
         raise Invalid('source_changed' if str(exc) == 'target_changed' else 'observation_failed') from None
 
 
-def project_appends(home, parser, observed, appends, cancelled, additional_sources):
+def project_appends(home, parser, observed, appends, cancelled, additional_sources, *, environment=False):
     """Reparse proposed original-source appends against the frozen, already observed startup graph."""
     def read(path):
         if path not in observed._files:
             raise Invalid('source_changed')
         file = observed._files[path]
         return appends.get(path, file['raw']), file['stamp']
-    return _observe(home, parser, None, CONTEXTS, cancelled, True, True, additional_sources, read)
+    return _observe(home, parser, None, CONTEXTS, cancelled, True, True, additional_sources, read, environment=environment)
 
 
-def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, additional_sources, read_state):
+def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, additional_sources, read_state, *, environment=False):
     contexts = [c for c in CONTEXTS if c in contexts]
     deadline = time.monotonic() + OBSERVATION_SECONDS
     files, issues, loads, occurrences = {}, [], [], []
@@ -342,6 +343,44 @@ def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, a
                 units, commands, excluded, unresolved = _independent(raw, response, home, units, commands)
                 record.update(excluded_aliases=excluded, unresolved_aliases=unresolved)
                 alias_names += [name for name, _ in excluded]
+            if environment:
+                structural = state.parser_response(raw, response, 0)
+                bounds = structural.get('statements')
+                record['environment'] = []
+                record['boundaries'] = set()
+                record['all_outer_known'] = bounds is not None
+                record['all_outer_bounded'] = bounds is not None
+                if bounds is None:
+                    issue(path, 'environment_spans_unavailable')
+                else:
+                    literal_sources = {tuple(site) for command, _, site in commands if command == 'source'}
+                    for first, last in bounds:
+                        # Require a standalone foreground statement. Background
+                        # separators live outside the sublist in the grammar.
+                        left = raw[raw.rfind(b'\n', 0, first) + 1:first]
+                        end = raw.find(b'\n', last)
+                        right = raw[last:end if end >= 0 else len(raw)].strip(b' \t\r')
+                        if (left.strip(b' \t') and not left.rstrip().endswith(b';') or
+                                right and not right.startswith((b'#', b';'))):
+                            record['all_outer_known'] = False
+                            record['all_outer_bounded'] = False
+                            continue
+                        record['boundaries'].add((first, last))
+                        text = state.utf8(raw[first:last])
+                        try:
+                            kind, key, intent = state.environment.classify(text)
+                        except state.environment.Excluded as exc:
+                            record['all_outer_known'] = False
+                            if str(exc) == 'restricted_content':
+                                restricted_names = re.findall(r'(?:^|[ \t])(' + state.environment.NAME + r')\+?=', text)
+                                record.setdefault('private_bindings', set()).update(restricted_names)
+                            if ((first, last) not in literal_sources and str(exc) == 'external_initializer' or
+                                    re.match(r'(?:export |typeset |integer |readonly |unset |eval |[A-Za-z_]\w*\+?=|\[\[)', text)):
+                                record.setdefault('environment_exclusions', set()).add(str(exc))
+                            continue
+                        record['environment'].append((kind, key, intent, [first, last]))
+                    provider_sites = {tuple(site) for kind, _, _, site in record['environment'] if kind == 'initializer'}
+                    commands = [command for command in commands if command[0] != 'source' or tuple(command[2]) not in provider_sites]
             if aliases:
                 units += [(name, raw[slice(*bounds)], dict(mode='ordinary', span=bounds))
                           for kind, name, bounds in commands if kind == 'alias']
@@ -388,9 +427,14 @@ def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, a
             env['status'] = 'ambiguous'; issue(env_path, 'ambiguous_zdotdir')
         else:
             prefix = locations[0][1] + '/'
-    if env['status'] not in ('missing', 'observed'):
+    known_env = environment and env['status'] == 'partial' and env.get('all_outer_bounded') and env.get('boundaries') and (
+        ({tuple(b) for _, _, _, b in env.get('environment', [])} |
+         {tuple(b) for command, _, b in env['commands'] if command == 'alias'} |
+         {tuple(d['span']) for _, _, d in env['units']}) == env['boundaries'] and
+        not any(name == 'ZDOTDIR' for _, name, _, _ in env['environment']))
+    if env['status'] not in ('missing', 'observed') and not known_env:
         issue(env_path, 'startup_unresolved')
-        root_paths = []
+        root_paths = [env_path] if environment else []
     else:
         root_paths = [env_path, *(prefix + name for name in sources.STARTUP[1:])]
 
@@ -469,9 +513,13 @@ def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, a
         bindings.setdefault(unit[0], []).append((path, unit, load, chain))
     items, contents, used_loads, used_sources = [], {}, set(), set()
     load_map = {row['id']: row for row in loads}
-    source_issues = tuple(issues)
+    source_issues = tuple(pair for pair in issues if pair[1] != 'environment_spans_unavailable')
     equivalence_context = None
     context_checked = False
+    if environment and env['status'] not in ('missing', 'observed'):
+        # Environment-only evidence may qualify a root. It cannot enlarge the
+        # legacy definitions inventory beyond the B4 startup contract.
+        bindings.clear()
     for name, candidates in sorted(bindings.items()):
         check()
         if independent and any(code != 'unsupported_context' for _, code in source_issues):
@@ -511,14 +559,88 @@ def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, a
             while load is not None and load not in used_loads:
                 used_loads.add(load); used_sources.add(load_map[load]['source'])
                 load = load_map[load]['parent']
+    if environment:
+        provider_sites = {(f['source']['id'], tuple(bounds)) for f in files.values() if f['source']
+                          for kind, _, _, bounds in f.get('environment', []) if kind == 'initializer'}
+        qualified_sites = {(f['source']['id'], site) for f in files.values() if f['source']
+                           for site in f.get('boundaries', ())} - provider_sites
+        private_sources = set()
+        for path, file in files.items():
+            if file['source'] and state.environment.PRIVATE.search(path):
+                private_sources.add(file['source']['id'])
+                file.setdefault('environment_exclusions', set()).add('restricted_content')
+        user_loads = set()
+        for load in loads:
+            parent = load['parent']
+            if load['source'] in private_sources:
+                continue
+            if parent is None or (parent in user_loads and
+                    (load_map[parent]['source'], tuple(load['site'])) in qualified_sites):
+                user_loads.add(load['id'])
+        # Propagate restrictions through symbolic reads without resolving values.
+        # This private reverse index is bounded by the source and declaration budgets.
+        private = {name for f in files.values() for name in f.get('private_bindings', ())}
+        readers = {}
+        for f in files.values():
+            for kind, name, intent, _ in f.get('environment', ()):
+                if kind != 'initializer':
+                    writes, reads = state.environment.parameter_uses(name, intent)
+                    for ref in reads:
+                        readers.setdefault(ref, set()).update(writes)
+        pending = list(private)
+        while pending:
+            newly_private = readers.get(pending.pop(), set()) - private
+            private.update(newly_private)
+            pending.extend(newly_private)
+        shadowed = {name for f in files.values() for name in f['names'] + f['alias_names']}
+        for path, file in files.items():
+            if file['status'] not in ('observed', 'partial') or not file['source']:
+                continue
+            source_id = file['source']['id']
+            visits = [load for load in loads if load['source'] == source_id and load['id'] in user_loads]
+            if not visits:
+                continue
+            ordinals = {}
+            for kind, key, intent, bounds in file.get('environment', []):
+                writes, reads = state.environment.parameter_uses(key, intent)
+                if writes & state.environment.FRAMEWORK_PARAMETERS:
+                    file.setdefault('environment_exclusions', set()).add('special_parameter')
+                    continue
+                if (reads | writes) & private:
+                    file.setdefault('environment_exclusions', set()).add('restricted_content')
+                    continue
+                if kind == 'initializer':
+                    commands_used = {'source', '.'} if key in ('nvm', 'asdf', 'Cargo') else {'eval', intent['variant'].split()[0]}
+                    if intent['guard'] == 'nonempty-nvm-script':
+                        commands_used.add('[')
+                else:
+                    declarations = [m['declaration'] for m in intent['members']] if 'members' in intent else [intent]
+                    commands_used = {d['form'] for d in declarations if d['form'] != 'assignment'}
+                    if any(d.get('words') == [[['nvm-directory', 'XDG_CONFIG_HOME', 'HOME']]] for d in declarations):
+                        commands_used.update(('[', 'printf'))
+                if commands_used & shadowed:
+                    file.setdefault('environment_exclusions', set()).add('shadowed_declaration')
+                    continue
+                order = ordinals.get((kind, key), 0)
+                ordinals[kind, key] = order + 1
+                row = dict(kind=kind, key=key, source=source_id, loads=[load['id'] for load in visits],
+                           details=dict(span=bounds, ordinal=order, intent=intent))
+                row['id'] = state.item_identity(row)
+                items.append(row)
+                contents[row['id']] = file['raw'][slice(*bounds)]
+                for load in visits:
+                    while load and load['id'] not in used_loads:
+                        used_loads.add(load['id'])
+                        used_sources.add(load['source'])
+                        load = load_map.get(load['parent'])
     check()
     try:
         snapshot = state.assemble([f['source'] for f in files.values() if f['source'] and f['source']['id'] in used_sources],
-                                  [r for r in loads if r['id'] in used_loads], items, [], contents)
+                                  [r for r in loads if r['id'] in used_loads], items, state.parameter_dependencies(items, loads), contents)
     except state.Invalid as exc:
         raise Invalid('resource_limit' if str(exc) == 'shell_state_resource_limit' else 'observation_failed') from None
     check()
-    return Observation(snapshot, files, issues, loads)
+    return Observation(snapshot, files, issues, loads, root_paths)
 
 
 def _shadows_source(names, commands):

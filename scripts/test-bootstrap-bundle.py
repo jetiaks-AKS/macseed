@@ -114,9 +114,9 @@ class BundleTests(unittest.TestCase):
             with self.assertRaises(bundle.Invalid):
                 bundle.inspect_bundle(corrupt, '/Users/unused')
 
-        for feature in ({'shell-state': 2}, {'shell-state': True}, {'future-feature': 1}):
+        for feature in ({'shell-state': 3}, {'shell-state': True}, {'future-feature': 1}):
             reject(feature, error=bundle.Unsupported)
-        for feature in ({}, {'shell-aliases': 1}, {'shell-state': 1, 'shell-aliases': 5}):
+        for feature in ({}, {'shell-state': 2}, {'shell-aliases': 1}, {'shell-state': 1, 'shell-aliases': 5}):
             reject(feature)
         reject(feature_wire=b'{"shell-state": 2, "shell-state": 1}')
         reject(remove=state.DEFINITIONS)
@@ -882,7 +882,7 @@ class BundleTests(unittest.TestCase):
         shutil.copy2(MODULE, fixture / "modules/bundle/bundle.py")
         shutil.copy2(MODULE.with_name("commands.sh"), fixture / "modules/bundle/commands.sh")
         (fixture / "modules/shell").mkdir()
-        for name in ("aliases.py", "sources.py", "recovery.py", "state.py"):
+        for name in ("aliases.py", "sources.py", "recovery.py", "state.py", "environment.py"):
             shutil.copy2(MODULE.parents[1] / "shell" / name, fixture / "modules/shell" / name)
         (fixture / "modules/apps").mkdir()
         shutil.copy2(MODULE.parents[1] / "apps/application_identity.py",
@@ -980,6 +980,7 @@ class BundleTests(unittest.TestCase):
             (MODULE.parents[1] / "shell/sources.py", fixture / "modules/shell/sources.py"),
             (MODULE.parents[1] / "shell/recovery.py", fixture / "modules/shell/recovery.py"),
             (MODULE.parents[1] / "shell/state.py", fixture / "modules/shell/state.py"),
+            (MODULE.parents[1] / "shell/environment.py", fixture / "modules/shell/environment.py"),
             (MODULE.parents[1] / "apps/application_identity.py", fixture / "modules/apps/application_identity.py"),
             (migration, fixture / "scripts/ssh-identity-migrate.sh"),
             (migration.parents[1] / "modules/migration/ssh-identities.sh",
@@ -1130,6 +1131,7 @@ class BundleTests(unittest.TestCase):
             (MODULE.parents[1] / "shell/sources.py", fixture / "modules/shell/sources.py"),
             (MODULE.parents[1] / "shell/recovery.py", fixture / "modules/shell/recovery.py"),
             (MODULE.parents[1] / "shell/state.py", fixture / "modules/shell/state.py"),
+            (MODULE.parents[1] / "shell/environment.py", fixture / "modules/shell/environment.py"),
             (MODULE.parents[1] / "apps/application_identity.py", fixture / "modules/apps/application_identity.py"),
             (migration, fixture / "scripts/ssh-identity-migrate.sh"),
             (migration.parents[1] / "modules/migration/ssh-identities.sh",

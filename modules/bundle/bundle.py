@@ -173,7 +173,7 @@ def shell_state_contract():
 def typed_shell(files):
     contract = shell_state_contract()
     raw = files.get(contract.SNAPSHOT, b'')
-    if not raw.startswith(contract.MAGIC):
+    if not raw.startswith(contract.MAGICS):
         if contract.DEFINITIONS in files:
             raise Invalid('unexpected Shell definitions payload')
         return None
@@ -187,8 +187,12 @@ def typed_shell(files):
         raise Invalid('invalid typed Shell snapshot') from None
 
 
-def require_runtime_shell(files):
-    typed_shell(files)
+def shell_functional_counts(typed):
+    """Project validated typed items into the three Capture selection groups."""
+    kinds = [item['kind'] for item in typed._value['items']]
+    return dict(aliases_functions=kinds.count('alias') + kinds.count('function'),
+                scripts=kinds.count('script'),
+                variables_path=sum(kind in shell_state_contract().environment.KINDS for kind in kinds))
 
 
 def shell_functions_contract():
@@ -200,9 +204,10 @@ def shell_functions_contract():
     return _shell_functions_contract
 
 
-def typed_shell_load(path):
-    if checked_file(path, shell_state_contract().MAX_MANIFEST).startswith(shell_state_contract().MAGIC):
-        return shell_functions_contract().load(path)
+def typed_shell_load(path, *, archive=False):
+    if checked_file(path, shell_state_contract().MAX_MANIFEST).startswith(shell_state_contract().MAGICS):
+        value = shell_functions_contract().load(path, archive=True)
+        return value
     return None
 
 
@@ -220,8 +225,9 @@ def shell_load(path):
 
 
 def validate_shell(files):
-    if typed_shell(files) is not None:
-        return {'shell-state': 1}
+    typed = typed_shell(files)
+    if typed is not None:
+        return {'shell-state': typed._value['schema']}
     raw = files.get('generated/shell/zshrc.snapshot')
     if raw is None:
         return {}
@@ -304,8 +310,8 @@ def staged_payload(stage, blueprint):
     files = {path: checked_file(stage / path) for path in required_paths(blueprint) if path != 'blueprint.conf'}
     files['blueprint.conf'] = blueprint
     shell = files.get('generated/shell/zshrc.snapshot', b'')
-    if shell.startswith(shell_state_contract().MAGIC):
-        files.update(typed_shell_load(stage / 'generated/shell/zshrc.snapshot')._payloads)
+    if shell.startswith(shell_state_contract().MAGICS):
+        files.update(typed_shell_load(stage / 'generated/shell/zshrc.snapshot', archive=True)._payloads)
     if shell.startswith(shell_contract().FILE_MAGIC):
         files.update(shell_contract().recovery_contract().contents(shell_load(stage / 'generated/shell/zshrc.snapshot')))
     topology = 'generated/workspace/topology.json'
@@ -825,15 +831,15 @@ def validate_archive(path, with_provenance=False):
     if 'generated/workspace/topology.json' in files:
         expected.add('generated/workspace/topology.json')
     required_features = manifest.get('required_features', {})
+    supported_versions = {key: (1,) for key in WORKSPACE_EXTENSIONS.values()}
+    supported_versions.update({'ssh-configuration': (2,), 'shell-aliases': (1, 2, 3, 4, 5), 'shell-state': (1, 2)})
     if (not isinstance(required_features, dict) or
-            any(type(value) is not int or
-                (value != 2 if key == 'ssh-configuration' else value not in (1, 2, 3, 4, 5) if key == 'shell-aliases'
-                 else key not in (*WORKSPACE_EXTENSIONS.values(), 'shell-state') or value != 1)
+            any(type(value) is not int or value not in supported_versions.get(key, ())
                 for key, value in required_features.items())):
         raise Unsupported('unsupported Bundle capabilities')
     if required_features.get('shell-aliases') == 5:
         expected.update(name for name in files if script_member(name))
-    if required_features.get('shell-state') == 1:
+    if required_features.get('shell-state') in (1, 2):
         typed = typed_shell(files)
         if typed is None:
             raise Invalid('missing typed Shell snapshot')
@@ -872,7 +878,6 @@ def validate_archive(path, with_provenance=False):
 
 def unpack(bundle, stage, home, *, workspace_preview=False):
     files, provenance = validate_archive(bundle, with_provenance=True)
-    require_runtime_shell(files)
     if not workspace_preview:
         require_runtime_workspace(files)
     target_paths(files, home)
@@ -918,7 +923,9 @@ def inspect_bundle(bundle, home):
     if shell_candidates:
         result['shell_script_candidates'] = shell_candidates
     if typed is not None:
-        result.update(required_features=validate_workspace(files, exact=True) | validate_ssh(files) | {'shell-state': 1}, restore_supported=True)
+        result.update(required_features=validate_workspace(files, exact=True) | validate_ssh(files) | validate_shell(files), restore_supported=True)
+        if typed._value['schema'] == 2:
+            result['shell_functional_counts'] = shell_functional_counts(typed)
     return result
 
 

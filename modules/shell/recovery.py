@@ -110,7 +110,7 @@ def load(path):
     return snapshot(raw, read) if raw.startswith(FILE_MAGIC) else base.snapshot(raw)
 
 
-def expand_request(value):
+def expand_request(value, *, max_declarations):
     """Bounded operation-scoped references; generic Protocol V1 stays at 4 KiB."""
     parameters = value.get('parameters')
     if not isinstance(parameters, dict) or 'script_manifest' not in parameters:
@@ -150,8 +150,20 @@ def expand_request(value):
         items = fields.pop('shell_items')
         selection = parameters.get('selection')
         if (not isinstance(selection, dict) or not isinstance(selection.get('items'), dict)
-                or 'shell-zsh' in selection['items'] or not isinstance(items, list) or len(items) > 384):
+                or 'shell-zsh' in selection['items'] or not isinstance(items, list)):
             raise base.Invalid('invalid_script_request')
+        if len(items) > base.MAX_ITEMS + MAX_FILES:
+            # Large Restore selections can include typed declarations plus independent Scripts.
+            if (value['operation'] not in ('restore_prepare', 'restore_execute', 'secure_restore_compare')
+                    or len(items) > max_declarations + MAX_FILES
+                    or not all(isinstance(item, str) and base.re.fullmatch(
+                        r'shell-(?:alias|function|variable|path-operation|initializer|script):[0-9a-f]{64}', item)
+                               for item in items) or len(set(items)) != len(items)):
+                raise base.Invalid('invalid_script_request')
+            files = sum(item.startswith('shell-script:') for item in items)
+            aliases = sum(item.startswith('shell-alias:') for item in items)
+            if files > MAX_FILES or len(items) - files > max_declarations or aliases > base.MAX_ITEMS:
+                raise base.Invalid('invalid_script_request')
         selection['items']['shell-zsh'] = items
     parameters.update(fields)
 

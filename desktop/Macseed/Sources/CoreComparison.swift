@@ -15,7 +15,8 @@ struct CoreComparisonResult: Decodable {
         let shellScriptLabels: [String: String]?
         let shellAliasLabels: [String: String]?
         let shellFunctionLabels: [String: String]?
-        enum CodingKeys: String, CodingKey { case groups, shellScriptLabels = "shell_script_labels", shellAliasLabels = "shell_alias_labels", shellFunctionLabels = "shell_function_labels", sshHosts = "ssh_hosts", appStoreNames = "app_store_names", settingLabels = "setting_labels", repositoryLabels = "repository_labels", workspaceLabels = "workspace_labels" }
+        let shellEnvironmentLabels: [String: String]?
+        enum CodingKeys: String, CodingKey { case groups, shellEnvironmentLabels = "shell_environment_labels", shellScriptLabels = "shell_script_labels", shellAliasLabels = "shell_alias_labels", shellFunctionLabels = "shell_function_labels", sshHosts = "ssh_hosts", appStoreNames = "app_store_names", settingLabels = "setting_labels", repositoryLabels = "repository_labels", workspaceLabels = "workspace_labels" }
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             groups = try values.decode([CoreRestoreInspection.Group].self, forKey: .groups)
@@ -25,6 +26,13 @@ struct CoreComparisonResult: Decodable {
             settingLabels = try values.decodeIfPresent([String: [String: String]].self, forKey: .settingLabels)
             // Reject malformed optional detail without losing a valid aggregate Check.
             sshHosts = try? values.decodeIfPresent(CoreSSHHosts.self, forKey: .sshHosts)
+            let environment = try? values.decodeIfPresent([String: String].self, forKey: .shellEnvironmentLabels)
+            shellEnvironmentLabels = environment.flatMap { labels in
+                labels.count <= 512 && labels.allSatisfy { id, label in
+                    CoreCaptureInventoryRow.Item.isEnvironmentID(id) && !label.isEmpty && label.utf8.count <= 160 &&
+                        !label.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+                } ? labels : nil
+            }
             let scripts = try? values.decodeIfPresent([String: String].self, forKey: .shellScriptLabels)
             shellScriptLabels = scripts.flatMap { labels in
                 let rows = labels.map { CoreShellScript(id: String($0.key.dropFirst("shell-script:".count)), path: $0.value) }
@@ -150,6 +158,15 @@ struct CoreComparisonResult: Decodable {
                   && ["supported", "unsupported"].contains($0.support) }),
               records.coverageRecords.allSatisfy({ ["resolved", "unresolved", "excluded", "no_requirement"].contains($0.disposition) }) else {
             throw CoreRuntimeError.malformedEvent
+        }
+        let owners = Dictionary(grouping: records.verificationRecords, by: \.recordID)
+        var declarations = Set<String>()
+        for row in comparisonRecords where row.domain == "shell-zsh" {
+            guard let predicate = CoreCaptureInventoryRow.Item.environmentPredicate(row.itemID) else { continue }
+            let evidence = owners[row.recordID] ?? []
+            guard declarations.insert(row.itemID).inserted, evidence.count == 1, let owner = evidence.first,
+                  owner.domain == row.domain, owner.itemID == row.itemID, owner.predicate == predicate,
+                  row.support == "supported" || row.comparisonKind == "unverified" else { throw CoreRuntimeError.malformedEvent }
         }
         for kind in ["matching", "missing", "differing", "unverified"] {
             guard comparison.counts[kind] == comparisonRecords.filter({ $0.comparisonKind == kind }).count else {

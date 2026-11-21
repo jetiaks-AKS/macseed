@@ -8,7 +8,7 @@ capture_observe() {
         status=unavailable
         reason=tool_unavailable
     else
-        "$exporter"
+        "$exporter" "${@:4}"
         result=$?
         status=present
         [[ $result -lt 2 ]] || { status=observation_error; reason=observation_failed; }
@@ -84,7 +84,7 @@ capture_validate_repositories() {
 capture_discovery() {
     capture_observe homebrew-packages export_brew_packages brew || return 2
     capture_observe homebrew-casks export_brew_casks brew || return 2
-    capture_observe app-store discover_appstore mas || return 2
+    capture_observe app-store discover_appstore mas --stable-order || return 2
     capture_observe git-configuration discover_git git || return 2
     capture_observe ssh-configuration discover_ssh_configuration || return 2
     capture_observe vscode-extensions export_vscode_extensions code || return 2

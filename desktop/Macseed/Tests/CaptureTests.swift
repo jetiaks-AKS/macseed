@@ -28,6 +28,203 @@ import Vision
         model.editSelection()
     }
 
+    @MainActor static func environmentSelectionCheck(model: CaptureModel, core: URL, root: URL) async throws {
+        let inventory = core.appendingPathComponent("inventory.json")
+        let original = try Data(contentsOf: inventory)
+        defer { try? original.write(to: inventory) }
+        let mode = core.appendingPathComponent("mode")
+        let originalMode = try Data(contentsOf: mode)
+        defer { try? originalMode.write(to: mode) }
+        let location = CoreLocation(root: core, python: URL(fileURLWithPath: CommandLine.arguments[2]),
+                                    home: root, temporaryBase: root, toolDirectories: [])
+        try write("legacy_capture", mode)
+        model.runtime.start(CoreRequest(.capabilities), location: location); await model.runtime.waitForCompletion()
+        precondition(model.runtime.environmentCaptureSupported == false)
+        model.scan(); await model.waitForCompletion()
+        precondition(model.state == .review && model.environmentItems.isEmpty)
+        try write("environment_recovery", mode)
+        model.runtime.start(CoreRequest(.capabilities), location: location); await model.runtime.waitForCompletion()
+        precondition(model.runtime.environmentCaptureSupported == true)
+        let id = "shell-variable:" + String(repeating: "a", count: 64)
+        let alias = "shell-alias:" + String(repeating: "b", count: 64)
+        let label = "EDITOR — Preferred text editor"
+        let details: [String: Any] = ["explanation": "Sets the preferred editor.", "context": "Interactive shells",
+                                      "origin": ".zshrc", "capture_only": false]
+        let rows: [[String: Any]] = [["domain": "shell-zsh", "status": "present", "reason": NSNull(), "selection_mode": "items",
+            "items": [["item_id": id, "label": label, "environment": details], ["item_id": alias, "label": "ll"]]]]
+        try JSONSerialization.data(withJSONObject: rows).write(to: inventory)
+        model.scan(); await model.waitForCompletion()
+        precondition(model.environmentItems.map(\.label) == [label] && model.environmentItems.first?.environment?.origin == ".zshrc")
+        precondition(model.developerGroupState(.shell) == .none && model.environmentSelectionState == .none)
+        model.selectEnvironmentItems(included: true)
+        precondition(model.selection.items["shell-zsh"] == [id] && model.environmentSelectionState == .all)
+        precondition(model.developerGroupState(.shell) == .mixed && model.developerGroupState(.shell, commandsOnly: true) == .none)
+        model.selectDeveloperGroup(.shell, included: false)
+        precondition(model.environmentSelectionState == .none && model.selectedItemCount == 0)
+        model.selectDeveloperGroup(.shell, included: true)
+        precondition(Set(model.selection.items["shell-zsh"] ?? []) == [alias, id] && model.shellParentConsent == nil)
+        precondition(model.developerGroupState(.shell, commandsOnly: true) == .all)
+        precondition(CaptureReviewPresentation.selectionLabel(model.categories.first { $0.id == "shell-zsh" }!.customCommands, model: model) == "1 of 1 selected")
+        precondition(model.developerGroupState(.shell) == .all && model.environmentSelectionState == .all)
+        let renders = CommandLine.arguments.contains("--environment-only") && !CommandLine.arguments.contains("--no-renders")
+        let tree = DeveloperSelectionGroup.disclosureIDs(["shell-zsh", ShellCommandPresentation.commandsID, "shell-environment"])
+        if renders {
+            try await environmentInfo(model, tree: tree, label: label)
+            try render(model, model.runtime, state: "environment-mixed", tree: tree)
+        }
+        model.selectShellParent(included: false)
+        precondition(model.selection.items["shell-zsh"] == [id] && model.selectedItemCount == 1)
+        precondition(model.developerGroupState(.shell) == .mixed && model.developerGroupState(.shell, commandsOnly: true) == .none)
+        model.prepare(destination: root.appendingPathComponent("variables.mbt")); await model.waitForCompletion()
+        precondition(model.state == .confirmation && model.preparation?.summary.selectedItems == 1)
+        if renders { try render(model, model.runtime, state: "environment-confirmation", tree: tree) }
+        model.create(); await model.waitForCompletion()
+        precondition(model.publication?.bundle.restoreSupported == true && model.publication?.bundle.requiredFeatures?["shell-state"] == 2)
+        if renders {
+            try render(model, model.runtime, state: "environment-result", scrollToBottom: true, tree: tree)
+            let many = (1...40).map { index in
+                ["item_id": "shell-variable:" + String(format: "%064x", index),
+                 "label": "PROJECT_BUILD_DIRECTORY_\(index) — Custom shell variable", "environment": details] as Object
+            }
+            var list = rows[0]
+            list["items"] = many
+            try JSONSerialization.data(withJSONObject: [list]).write(to: inventory)
+            model.scan(); await model.waitForCompletion()
+            precondition(model.environmentItems.count == 40 && model.selectedItemCount == 0)
+            let items = model.environmentItems
+            model.selectItem("shell-zsh", item: items[0].itemID, included: true)
+            precondition(model.environmentSelectionState == .mixed && model.developerGroupState(.shell) == .mixed)
+            precondition(model.environmentSelectedCount == 1 && model.authorizedShellScripts.isEmpty)
+            clickShellCheckbox("Select Shell", state: .mixed, model: model, runtime: model.runtime, tree: tree)
+            precondition(model.shellParentConsent == nil && model.selectedItemCount == 0)
+            clickShellCheckbox("Select Shell", state: .off, model: model, runtime: model.runtime, tree: tree)
+            precondition(model.developerGroupState(.shell) == .all && model.environmentSelectedCount == 40)
+            precondition(model.selection.items["shell-zsh"] == items.map(\.itemID).sorted() && model.selection.secureIdentities.isEmpty)
+            model.selectEnvironmentItems(included: false)
+            precondition(model.developerGroupState(.shell) == .none && model.selectedItemCount == 0)
+            try render(model, model.runtime, state: "environment-long-list", scrollToBottom: true, tree: tree)
+        }
+        let scripts = core.appendingPathComponent("shell-scripts.json")
+        let originalScripts = try? Data(contentsOf: scripts)
+        defer {
+            if let originalScripts { try? originalScripts.write(to: scripts) }
+            else { try? FileManager.default.removeItem(at: scripts) }
+        }
+        try JSONSerialization.data(withJSONObject: [["path": ".local/bin/example", "alias_ids": [alias]]]).write(to: scripts)
+        try JSONSerialization.data(withJSONObject: rows).write(to: inventory)
+        model.scan(); await model.waitForCompletion()
+        let script = model.shellScriptCandidates[0].id
+        model.selectItem("shell-zsh", item: id, included: true)
+        let previous = model.selection
+        model.selectDeveloperGroup(.shell, included: true)
+        precondition(model.shellParentConsent?.newScripts.map(\.id) == [script] && model.selection == previous)
+        model.resolveShellParent(model.shellParentConsent!, choice: .cancel)
+        precondition(model.selection == previous && model.authorizedShellScripts.isEmpty)
+        model.selectDeveloperGroup(.shell, included: true)
+        model.resolveShellParent(model.shellParentConsent!, choice: .aliasesOnly)
+        precondition(model.selection.items["shell-zsh"] == [alias, id] && model.authorizedShellScripts.isEmpty)
+        model.selectDeveloperGroup(.shell, included: true)
+        model.resolveShellParent(model.shellParentConsent!, choice: .includeScripts)
+        await model.waitForCompletion()
+        precondition(model.developerGroupState(.shell) == .all && model.authorizedShellScripts == [script])
+        model.selectDeveloperGroup(.shell, included: true)
+        precondition(model.shellParentConsent == nil)
+        model.selectDeveloperGroup(.shell, included: false)
+        precondition(model.selectedItemCount == 0 && model.shellParentConsent == nil)
+        model.selectShellParent(included: true)
+        model.resolveShellParent(model.shellParentConsent!, choice: .aliasesOnly)
+        precondition(model.selection.items["shell-zsh"] == [alias] && model.environmentSelectionState == .none)
+        try FileManager.default.removeItem(at: scripts)
+        if renders {
+            let vscode = "vscode-extensions"
+            try JSONSerialization.data(withJSONObject: rows + [row(vscode, mode: "items", items: ["fixture.extension"])]).write(to: inventory)
+            model.scan(); await model.waitForCompletion()
+            model.selectEnvironmentItems(included: true)
+            model.selectCategory(vscode, included: true)
+            model.prepare(destination: root.appendingPathComponent("alignment.mbt")); await model.waitForCompletion()
+            precondition(model.state == .confirmation && model.selectedItemCount == 2)
+            try render(model, model.runtime, state: "environment-alignment",
+                tree: tree.union(CaptureHierarchy.disclosureIDs([vscode], scope: .ordinary)))
+        }
+        try JSONSerialization.data(withJSONObject: [row("shell-zsh", mode: "items", status: "unsupported")]).write(to: inventory)
+        try write("environment_excluded", mode)
+        model.scan(); await model.waitForCompletion()
+        precondition(model.environmentItems.isEmpty && !model.environmentNotes.isEmpty && model.categories.contains { $0.id == "shell-zsh" })
+        precondition(!model.canCreate)
+        if renders {
+            try render(model, model.runtime, state: "environment-exclusions", tree: tree)
+            try await environmentInfo(model, tree: tree, label: "Excluded declarations", excluded: true)
+        }
+    }
+
+    @MainActor static func environmentInfo(_ model: CaptureModel, tree: Set<String>, label: String, excluded: Bool = false) async throws {
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.accessory)
+        let enhanced = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previous = NSApp.accessibilityAttributeValue(enhanced)
+        NSApp.accessibilitySetValue(true, forAttribute: enhanced)
+        defer { NSApp.accessibilitySetValue(previous, forAttribute: enhanced) }
+        let host = NSHostingView(rootView: VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            CaptureView(model: model, runtime: model.runtime, showsActions: false,
+                categoryTreeExpansion: .constant(tree), experiencedVisibility: .constant(true)).padding(.horizontal)
+            Divider()
+            CaptureActionsView(model: model, runtime: model.runtime).modifier(WorkspaceFooterPadding())
+        }.frame(width: 785))
+        let window = NSWindow(contentRect: .init(x: 80, y: 80, width: 785, height: 900),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        func nodes(_ item: AnyObject, depth: Int = 0) -> [AnyObject] {
+            guard depth < 28 else { return [] }
+            return [item] + (item.accessibilityChildren?() ?? []).flatMap { nodes($0 as AnyObject, depth: depth + 1) }
+        }
+        try await Task.sleep(for: .milliseconds(180))
+        host.layoutSubtreeIfNeeded()
+        let before = model.selection
+        func checkbox(_ view: NSView) -> NSButton? {
+            if let button = view as? NSButton, button.accessibilityLabel() == label,
+               button.target is NativeSelectionCheckbox.Coordinator { return button }
+            return view.subviews.lazy.compactMap(checkbox).first
+        }
+        let operation = model.runtime.operationID
+        for expected in excluded ? [] : [false, true] {
+            guard let button = checkbox(host) else { preconditionFailure("Missing declaration checkbox") }
+            button.performClick(nil)
+            try await Task.sleep(for: .milliseconds(80))
+            host.layoutSubtreeIfNeeded()
+            precondition((model.selection == before) == expected && model.state == .review)
+            precondition(model.shellParentConsent == nil && model.runtime.secureChallenge == nil && model.runtime.operationID == operation)
+        }
+        guard let info = nodes(host).first(where: { $0.accessibilityLabel?() == "About " + label }) else {
+            preconditionFailure("Missing Variables & PATH Info control")
+        }
+        precondition(info.accessibilityPerformPress?() == true)
+        try await Task.sleep(for: .milliseconds(250))
+        let popups = NSApp.windows.filter { $0 !== window && $0.isVisible }
+        func text(in window: NSWindow) -> String {
+            guard let view = window.contentView else { return "" }
+            return nodes(view).flatMap { node -> [String] in
+                var text = [node.accessibilityLabel?()].compactMap { $0 }
+                if let object = node as? NSObject, object.responds(to: #selector(NSAccessibilityProtocol.accessibilityValue)),
+                   let value = object.perform(#selector(NSAccessibilityProtocol.accessibilityValue))?.takeUnretainedValue() as? String { text.append(value) }
+                return text
+            }.joined(separator: " ")
+        }
+        let expected = excluded ? model.environmentNotes : ["Sets the preferred editor.", "Interactive shells", ".zshrc"]
+        guard let popup = popups.first(where: { window in
+            let description = text(in: window)
+            return expected.allSatisfy { description.contains($0) }
+        }) else { preconditionFailure("Missing accessible Info content for " + label) }
+        let anchor = info.accessibilityFrame?() ?? .zero
+        precondition(!anchor.isEmpty && popup.frame.minY >= anchor.minY - 2, "Info overlaps the footer below its anchor: \(popup.frame), \(anchor)")
+        print("PASS: accessible Info above footer for " + label)
+        popup.cancelOperation(nil)
+        precondition(model.selection == before && model.state == .review)
+    }
+
     @MainActor static func shellCounterChecks(model: CaptureModel, runtime: CoreRuntime, core: URL, root: URL) async throws {
         try await shellConfirmationUICheck(model: model, runtime: runtime, core: core, root: root)
         let inventory = core.appendingPathComponent("inventory.json"), scripts = core.appendingPathComponent("shell-scripts.json")
@@ -46,20 +243,64 @@ import Vision
             ["path": "Scripts/two.py", "alias_ids": [String]()]]
         try JSONSerialization.data(withJSONObject: rows).write(to: inventory)
         try JSONSerialization.data(withJSONObject: files).write(to: scripts)
+        let location = CoreLocation(root: core, python: URL(fileURLWithPath: CommandLine.arguments[2]),
+            home: root, temporaryBase: root, toolDirectories: [])
+        runtime.start(CoreRequest(.capabilities), location: location); await runtime.waitForCompletion()
+        let tree = DeveloperSelectionGroup.disclosureIDs(["shell-zsh", ShellCommandPresentation.commandsID, DeveloperSelectionGroup.environmentID])
         // Same unrelated baseline as the report: 11 domains and 78 objects.
         for (label, other, includeAliases, scriptCount, domains, items) in [
             ("aliases-only", false, true, 0, 1, 12), ("scripts-only", false, false, 3, 1, 3),
             ("baseline", true, true, 0, 12, 90), ("linked", true, true, 1, 13, 91),
-            ("three", true, true, 3, 13, 93), ("typed-linked", true, true, 1, 13, 93)] {
-            let typed = label == "typed-linked"
+            ("three", true, true, 3, 13, 93), ("typed-linked", true, true, 1, 13, 93),
+            ("observed-all", true, true, 1, 14, 95), ("observed-no-variables", true, true, 1, 13, 93),
+            ("observed-no-scripts", true, true, 0, 13, 94)] {
+            let observed = label.hasPrefix("observed-")
+            let typed = label == "typed-linked" || observed
             var inventoryRows = rows
             if typed {
                 inventoryRows[0] = row("shell-zsh", mode: "items", items: aliases + (1...2).map { "shell-function:" + String(format: "%064x", $0) })
+            }
+            if observed {
+                let detail: Object = ["explanation": "Fixture setting", "context": "Interactive shells", "origin": ".zshrc", "capture_only": true]
+                let declarations: [Object] = ["variable", "path-operation"].map { kind in
+                    ["item_id": "shell-" + kind + ":" + String(repeating: "c", count: 64), "label": kind, "environment": detail]
+                }
+                inventoryRows[0]["items"] = (inventoryRows[0]["items"] as! [Object]) + declarations
             }
             try JSONSerialization.data(withJSONObject: inventoryRows).write(to: inventory)
             model.scan(); await model.waitForCompletion()
             precondition(model.state == .review && model.shellScriptCandidates.count == 3)
             for category in model.categories { model.selectCategory(category.id, included: category.id == "shell-zsh" ? includeAliases : other) }
+            if observed {
+                precondition(model.availableAreaCount == 14)
+                model.selectEnvironmentItems(included: label != "observed-no-variables")
+            }
+            if label == "observed-no-scripts" {
+                let previous = model.selection
+                func click(_ label: String, _ state: NSControl.StateValue) {
+                    clickShellCheckbox("Select " + label, state: state, model: model, runtime: runtime, tree: tree)
+                }
+                click("Custom Commands", .mixed)
+                precondition(model.environmentSelectedCount == 2 && model.selectedItems["shell-zsh"]?.count == 2 && model.shellParentConsent == nil)
+                let environmentOnly = model.selection
+                click("Custom Commands", .off)
+                model.resolveShellParent(model.shellParentConsent!, choice: .cancel)
+                precondition(model.selection == environmentOnly && model.authorizedShellScripts.isEmpty)
+                click("Shell", .mixed)
+                precondition(model.selectedItems["shell-zsh"] == nil && model.shellParentConsent == nil)
+                click("Shell", .off)
+                model.resolveShellParent(model.shellParentConsent!, choice: .aliasesOnly)
+                precondition(model.selection == previous && model.authorizedShellScripts.isEmpty)
+                click("Shell", .mixed)
+                precondition(model.selectedItems["shell-zsh"] == nil && model.shellParentConsent == nil)
+                click("Shell", .off)
+                model.resolveShellParent(model.shellParentConsent!, choice: .aliasesOnly)
+                model.selectItem("shell-zsh", item: model.environmentItems[0].itemID, included: false)
+                click("Variables & PATH", .mixed)
+                precondition(model.environmentSelectedCount == 0 && model.selectedItems["shell-zsh"]?.count == 14 && model.shellParentConsent == nil)
+                click("Variables & PATH", .off)
+                precondition(model.selection == previous && model.shellParentConsent == nil)
+            }
             let chosen = model.shellScriptCandidates.filter { scriptCount == 3 || (scriptCount == 1 && $0.path == "Scripts/linked") }
             for script in chosen { model.selectShellScript(script.id, included: true); await model.waitForCompletion() }
             precondition(model.selectedDomainCount == domains && model.selectedItemCount == items, label)
@@ -74,9 +315,10 @@ import Vision
             precondition(publication.bundle.itemCount == items - (includeAliases && scriptCount > 0 && !typed ? 1 : 0),
                          "Physical Restore requirement counts stay unchanged")
             precondition(model.resultPresentation?.scope == "\(domains) \(domains == 1 ? "domain" : "domains") · \(items) items saved")
+            if observed { print("PASS: \(label) at Review, Prepare, publication and Result: \(domains) domains, \(items) items") }
             if scriptCount > 0 {
                 let value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(runtime.latestResult!.fields["data"]!)) as! Object
-                for corruption in ["missing", "duplicate", "association", "count", "typed-contract"] {
+                for corruption in ["missing", "duplicate", "association", "count", "typed-contract", "kind-counts"] {
                     var invalid = value, bundle = value["bundle"] as! Object
                     var candidates = bundle["shell_script_candidates"] as! [Object]
                     if corruption == "missing" { candidates = [] }
@@ -85,6 +327,12 @@ import Vision
                     if corruption == "count" {
                         var counts = bundle["selected_item_counts"] as! [String: Int]
                         counts["shell-zsh", default: 0] += 1; bundle["selected_item_counts"] = counts
+                    }
+                    if corruption == "kind-counts" {
+                        guard var groups = bundle["shell_functional_counts"] as? [String: Int] else { continue }
+                        groups["aliases_functions", default: 0] += 1
+                        groups["variables_path", default: 0] -= 1
+                        bundle["shell_functional_counts"] = groups
                     }
                     if corruption == "typed-contract" {
                         if !typed { continue }
@@ -275,7 +523,7 @@ import Vision
             model.selectCategory(category.id, included: false)
             precondition(CaptureReviewPresentation.selectionLabel(category, model: model).isEmpty)
         }
-        print("PASS: Capture native Shell/Custom Commands 12-of-12 aliases, 0-of-1 scripts: mixed/all clear; none requests exact consent; Cancel preserves; Scripts-only context; alias deselection preserves scripts; nested zero blank")
+        print("PASS: Capture native Shell/Custom Commands 12-of-12 aliases, 0-of-1 scripts: mixed/all clear; empty requests exact consent; Cancel preserves; Scripts-only context; alias deselection preserves scripts; nested zero blank")
     }
 
     @MainActor static func shellCustomSelectionChecks(model: CaptureModel, runtime: CoreRuntime, core: URL, root: URL) async throws {
@@ -328,7 +576,7 @@ import Vision
         model.selectDeveloperGroup(.shell, included: true)
         precondition(model.shellParentConsent?.newScripts.map(\.id) == [other])
         model.resolveShellParent(model.shellParentConsent!, choice: .aliasesOnly)
-        precondition(model.authorizedShellScripts == [shared], "Aliases only preserves the exact manual subset")
+        precondition(model.authorizedShellScripts.isEmpty, "Continue Without Scripts excludes previously authorized files")
         model.selectDeveloperGroup(.shell, included: true)
         model.resolveShellParent(model.shellParentConsent!, choice: .includeScripts)
         precondition(model.inspectingShellScripts && !model.canCreate)
@@ -541,8 +789,8 @@ import Vision
         guard !CommandLine.arguments.contains("--no-renders") else { return }
         _ = NSApplication.shared
         NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        for (width, viewportHeight) in (state.hasPrefix("shell-custom") || state.hasPrefix("consistency") ? [(580, 900), (985, 900)] : [(785, 660), (985, 760), (1385, 1010)]) {
-            let height = settingsOnly ? 1120 : viewportHeight
+        for (width, viewportHeight) in (state.hasPrefix("shell-custom") || state.hasPrefix("consistency") || state.hasPrefix("environment-") ? [(580, 900), (985, 900)] : [(785, 660), (985, 760), (1385, 1010)]) {
+            let height = state == "environment-alignment" ? 1250 : settingsOnly ? 1120 : viewportHeight
             let content = VStack(spacing: 0) {
                 WorkflowContentViewport(pinned: !settingsOnly && [.review, .confirmation, .result].contains(model.state)) {
                     VStack(alignment: .leading, spacing: 20) {
@@ -575,6 +823,24 @@ import Vision
             }
             if [.confirmation, .result].contains(model.state) {
                 precondition(checkboxes(host).isEmpty, "Prepared and published scope is read-only")
+            }
+            if state == "environment-mixed" {
+                let boxes = checkboxes(host)
+                func box(_ label: String) -> NSButton { boxes.first { $0.accessibilityLabel() == label }! }
+                let commands = box("Select Custom Commands"), environment = box("Select Variables & PATH")
+                precondition(commands.state == .on && environment.state == .on && box("Select Shell").state == .on)
+                let a = commands.convert(commands.bounds, to: host), b = environment.convert(environment.bounds, to: host)
+                precondition(abs(a.midX - b.midX) < 1 && a.size == b.size && abs(a.midY - b.midY) >= 48)
+                let previous = model.selection
+                environment.performClick(nil)
+                precondition(model.environmentSelectionState == .none && model.developerGroupState(.shell, commandsOnly: true) == .all)
+                RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)); host.layoutSubtreeIfNeeded()
+                box("Select Variables & PATH").performClick(nil)
+                precondition(model.selection == previous && model.shellParentConsent == nil)
+            }
+            if state == "environment-exclusions" {
+                let master = checkboxes(host).first { $0.accessibilityLabel() == "Select Variables & PATH" }
+                precondition(master?.state == .off && master?.isEnabled == false)
             }
             if state == "shell-custom-selection", width == 580, !dark {
                 for label in ["Select Shell", "Select Custom Commands", "Select Scripts"] {
@@ -645,6 +911,26 @@ import Vision
             host.displayIfNeeded()
             guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { preconditionFailure("Native Capture render unavailable") }
             host.cacheDisplay(in: host.bounds, to: bitmap)
+            if state.hasPrefix("environment-") {
+                let expected = [
+                    "environment-mixed": ["Custom Commands", "Variables & PATH", "1 of 1 selected", "Preferred text editor"],
+                    "environment-long-list": ["PROJECT_BUILD_DIRECTORY_40", "Custom shell variable"],
+                    "environment-alignment": ["Ready to Save", "Variables & PATH", "Extensions", "1 item included"],
+                    "environment-confirmation": ["Variables & PATH will be saved as plaintext"],
+                    "environment-result": ["Save Complete"],
+                    "environment-exclusions": ["Variables & PATH", "Unavailable", "Excluded declarations"]
+                ]
+                let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
+                try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([recognition])
+                let text = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+                precondition(expected[state]!.allSatisfy { text.localizedCaseInsensitiveContains($0) }, "\(state) at \(width): \(text)")
+                precondition(!text.contains("2 of 1 selected") && !text.localizedCaseInsensitiveContains("Rebuild and Check are unavailable"))
+                if state == "environment-alignment" {
+                    let counts = (recognition.results ?? []).filter { $0.topCandidates(1).first?.string == "1 item included" }
+                    precondition(counts.count == 2 && abs(counts[0].boundingBox.minX - counts[1].boundingBox.minX) * CGFloat(width) < 2,
+                                 "Variables & PATH and Extensions count alignment at \(width): \(text)")
+                }
+            }
             if state == "b4-confirmation", width == 985 {
                 let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
                 try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([recognition])
@@ -775,11 +1061,18 @@ import Vision
         setbuf(stdout, nil)
         // Foundation resolves /private/var to /var, while Core requires Python's
         // canonical parent spelling. Use an explicit canonical fixture root.
-        let root = (!Set(["--shell-ui-only", "--confirmation-ui-only", "--ssh-confirmation-only"]).isDisjoint(with: CommandLine.arguments) ? FileManager.default.temporaryDirectory : URL(fileURLWithPath: "/private/tmp"))
+        let scratch = ProcessInfo.processInfo.environment["TMPDIR"].map { URL(fileURLWithPath: $0, isDirectory: true) } ?? FileManager.default.temporaryDirectory
+        let lifecycle = CommandLine.arguments.contains("--environment-lifecycle-only") || CommandLine.arguments.contains("--environment-function-preview-only")
+        let lifecycleRoot = URL(fileURLWithPath: scratch.path.hasPrefix("/var/") ? "/private" + scratch.path : scratch.path)
+        let root = (lifecycle ? lifecycleRoot : !Set(["--shell-ui-only", "--confirmation-ui-only", "--ssh-confirmation-only", "--environment-only"]).isDisjoint(with: CommandLine.arguments) ? scratch : URL(fileURLWithPath: "/private/tmp"))
             .appendingPathComponent("macseed-desktop-capture-tests-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
         let python = URL(fileURLWithPath: CommandLine.arguments[2])
+        if lifecycle {
+            try await realCore(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, environmentOnly: true)
+            return
+        }
         if CommandLine.arguments.contains("--mixed-shell-only") || CommandLine.arguments.contains("--capture-gui-only") {
             try await realCore(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, mixedOnly: true, guiOnly: CommandLine.arguments.contains("--capture-gui-only"))
             return
@@ -811,9 +1104,9 @@ import Vision
         try write("""
         import hashlib, json, pathlib, signal, sys, time, os
         request = json.loads(sys.stdin.buffer.read())
-        assert request['operation'] in ('capture_prepare', 'capture_execute', 'capture_script_inspect')
+        assert request['operation'] in ('capabilities', 'capture_prepare', 'capture_execute', 'capture_script_inspect')
         with open('requests.jsonl', 'a') as stream: stream.write(json.dumps(request) + '\\n')
-        params = request['parameters']; selection = params.get('selection'); mode = pathlib.Path('mode').read_text()
+        params = request.get('parameters', {}); selection = params.get('selection'); mode = pathlib.Path('mode').read_text()
         secure_path = pathlib.Path('secure-inventory.json')
         secure = json.loads(secure_path.read_text()) if secure_path.exists() else dict(status='unavailable', items=[])
         assert selection is None or set(selection['secure_identities']) <= {item['item_id'] for item in secure['items']}
@@ -829,6 +1122,12 @@ import Vision
             emit('failed', dict(code='cancelled', publication_occurred=published)); sys.exit(130)
         signal.signal(signal.SIGTERM, stop)
         emit('started')
+        if request['operation'] == 'capabilities':
+            features = {} if mode == 'legacy_capture' else dict(shell_environment_capture=dict(version=2, restore_supported=mode == 'environment_recovery', explicit_plaintext=True))
+            emit('result', dict(protocol_version=1, product_version='3.4.0', operations=['capture_prepare','capture_execute'], features=features))
+            emit('completed'); sys.exit(0)
+        if mode == 'legacy_capture':
+            assert 'shell_environment' not in params and 'shell_plaintext_ids' not in params
         if request['operation'] == 'capture_script_inspect':
             if mode == 'slow_inspection': time.sleep(10)
             entries = json.loads(pathlib.Path('shell-scripts.json').read_text())
@@ -863,6 +1162,15 @@ import Vision
                 summary['secure_identity_count'] = len(selection['secure_identities'])
             result = dict(prepared_capture_id='a'*64, inventory=[] if mode == 'empty_inventory' else rows,
                  selection=selection, summary=summary, secure_identities=secure)
+            if any('environment' in item for row in rows for item in row['items']):
+                result['shell_environment'] = dict(available=True, explanations=[])
+                assert params.get('shell_environment') is True
+                selected = set((selection or {}).get('items', {}).get('shell-zsh', []))
+                env = {item['item_id'] for row in rows for item in row['items'] if 'environment' in item}
+                assert set(params['shell_plaintext_ids']) == selected & env
+                if selected & env and selected - env: summary['selected_domains'] += 1
+            if mode == 'environment_excluded':
+                result['shell_environment'] = dict(available=True, explanations=['Declarations containing possible secrets were excluded.'])
             scripts = pathlib.Path('shell-scripts.json')
             if scripts.exists():
                 aliases = next(row['items'] for row in rows if row['domain']=='shell-zsh')
@@ -909,7 +1217,8 @@ import Vision
                 key = hashlib.sha256(('shell-script:'+entry['path']).encode()).hexdigest()
                 if key in params['shell_script_selection']:
                     saved_scripts.append(dict(id=key, path=entry['path'], alias_ids=sorted(selected.intersection(entry['alias_ids'])), independent=True))
-        typed = any(key.startswith('shell-function:') for key in selection['items'].get('shell-zsh', []))
+        environment = bool(params.get('shell_plaintext_ids'))
+        typed = environment or any(key.startswith('shell-function:') for key in selection['items'].get('shell-zsh', []))
         if typed:
             counts['shell-zsh'] = len(selection['items']['shell-zsh']) + len(saved_scripts)
             saved_scripts = [dict(row, alias_ids=[]) for row in saved_scripts]
@@ -917,11 +1226,41 @@ import Vision
         if mode == 'wrong_item_counts': counts = {key:value+1 for key,value in counts.items()}
         emit('result', dict(publication_occurred=mode!='unpublished', destination=params['destination'],
              prepared_capture_id='b'*64 if mode=='wrong_binding' else 'a'*64,
-             bundle=dict(format_version=1, selected_categories=[row['domain'] for row in rows if row['domain'] in selection['categories'] and row['selection_mode']=='category'], selected_item_counts=counts, secure_component=False, shell_script_candidates=saved_scripts, **({'required_features': {'shell-state': 1}} if typed else {}))))
+             bundle=dict(format_version=1, selected_categories=[row['domain'] for row in rows if row['domain'] in selection['categories'] and row['selection_mode']=='category'], selected_item_counts=counts, secure_component=False, shell_script_candidates=saved_scripts, **({'required_features': {'shell-state': 2}, 'restore_supported': mode == 'environment_recovery',
+                 'shell_functional_counts': dict(variables_path=len(params['shell_plaintext_ids']), scripts=len(saved_scripts),
+                                                aliases_functions=len(selection['items']['shell-zsh'])-len(params['shell_plaintext_ids']))} if environment else {'required_features': {'shell-state': 1}} if typed else {}))))
         emit('completed'); sys.exit(0)
         """, core.appendingPathComponent("fixture.py"))
         let runtime = CoreRuntime(operationLogs: nil)
         let model = CaptureModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+        if CommandLine.arguments.dropFirst(3).allSatisfy({ $0 == "--no-renders" }) {
+            let isolated = CaptureModel(runtime: CoreRuntime(operationLogs: nil),
+                location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+            try await environmentSelectionCheck(model: isolated, core: core, root: root)
+        }
+        if CommandLine.arguments.contains("--environment-only") {
+            // A native popover can stop Swift's command-line async-main loop.
+            // Keep the fixture's event loop alive through dismissal and the final assertion.
+            try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
+                CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue) {
+                    MainActor.assumeIsolated {
+                        var result: Result<Void, Error>?
+                        Task { @MainActor in
+                            do { try await environmentSelectionCheck(model: model, core: core, root: root); result = .success(()) }
+                            catch { result = .failure(error) }
+                            CFRunLoopStop(CFRunLoopGetMain())
+                        }
+                        while result == nil {
+                            let status = CFRunLoopRunInMode(.defaultMode, Date.distantFuture.timeIntervalSinceNow, false)
+                            precondition(status != .finished || result != nil)
+                        }
+                        done.resume(with: result!)
+                    }
+                }
+                CFRunLoopWakeUp(CFRunLoopGetMain())
+            }
+            print("PASS: Variables & PATH selection, script consent, counts, Confirmation and exclusions"); return
+        }
         if CommandLine.arguments.contains("--consistency-only") {
             try await captureConsistencyChecks(model: model, runtime: runtime, core: core, root: root)
             return
@@ -1376,6 +1715,7 @@ import Vision
         try await secureSelectionChecks(model: model, core: core)
         try await realCore(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
         try await realCore(root: root.appendingPathComponent("shell-focused"), repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, shellOnly: true)
+        try await realCore(root: root.appendingPathComponent("environment-lifecycle"), repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, environmentOnly: true)
         try await realCore(root: root.appendingPathComponent("mixed-shell-focused"), repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, mixedOnly: true)
         try await realCore(root: root.appendingPathComponent("gui-mixed-focused"), repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, mixedOnly: true, guiOnly: true)
         try await secureCaptureChecks(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
@@ -1660,7 +2000,207 @@ import Vision
         print("PASS: native manual picker contract, duplicate/add-many/default-off/cancel consent, zero-alias Prepare → Confirmation → Execute → Result, rejection and unchanged source bytes")
     }
 
-    @MainActor static func mixedShellCore(root: URL, repository: URL, core: URL, home: URL, bin: URL, python: URL, guiOnly: Bool = false) async throws {
+    @MainActor static func environmentLifecycle(root: URL, repository: URL, source: CoreLocation, tools: URL) async throws {
+        let fm = FileManager.default
+        let variable = "export MACSEED_B5_GUI_ROOT=\"$HOME/work\"\n"
+        let path = "path=(\"$MACSEED_B5_GUI_ROOT/bin\" $path)\n"
+        let alias = "alias listing='ls -la'\n"
+        let provider = "eval \"$(/unqualified/bin/brew shellenv zsh)\"\n"
+        let startup = source.home.appendingPathComponent(".zshrc")
+        try write(variable + path + alias, startup)
+        try write(provider, source.home.appendingPathComponent(".zprofile"))
+        let script = source.home.appendingPathComponent("Scripts/fixture")
+        try fm.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try write("#!/bin/sh\nexit 7\n", script, executable: true)
+        let original = try snapshot(source.home)
+        try fm.createDirectory(at: source.root.appendingPathComponent("bin"), withIntermediateDirectories: true)
+        for name in ["bin/bs", "scripts/install-bs.sh"] {
+            try fm.copyItem(at: repository.appendingPathComponent(name), to: source.root.appendingPathComponent(name))
+        }
+        try fm.createSymbolicLink(at: tools.appendingPathComponent("bs"), withDestinationURL: source.root.appendingPathComponent("bin/bs"))
+        try write("#!/bin/sh\nexit 0\n", tools.appendingPathComponent("sudo"), executable: true)
+        let scenarios = CommandLine.arguments.contains("--environment-function-preview-only")
+            ? ["function-conflict"] : ["variables", "mixed", "partial", "function-conflict"]
+        for scenario in scenarios {
+            let functionConflict = scenario == "function-conflict"
+            let profile = source.home.appendingPathComponent(".zprofile")
+            if functionConflict { try write("greet() { print saved; }\n" + provider, profile) }
+            let mixed = scenario != "variables", partial = scenario == "partial"
+            let runtime = CoreRuntime(operationLogs: nil)
+            runtime.start(CoreRequest(.capabilities), location: source); await runtime.waitForCompletion()
+            precondition(runtime.capabilities?.supportsEnvironmentRecovery == true)
+            let capture = CaptureModel(runtime: runtime, location: source)
+            capture.scan(); await capture.waitForCompletion()
+            precondition(capture.state == .review, "Scan: \(String(describing: capture.failure))")
+            if capture.environmentItems.isEmpty && runtime.latestResult?.data?["shell_functions"]?.object?["codes"] == .array([.string("functions_unavailable")]) {
+                print("NOT RUN: active Variables & PATH on a non-enforcing parser platform"); return
+            }
+            precondition(capture.environmentItems.count == 3, "Inventory: \(capture.environmentItems.map(\.label)), \(capture.environmentNotes)")
+            for category in capture.categories where category.selectable { capture.selectCategory(category.id, included: false) }
+            capture.selectEnvironmentItems(included: true)
+            let initializer = capture.environmentItems.first { $0.itemID.hasPrefix("shell-initializer:") }!
+            if !partial { capture.selectItem("shell-zsh", item: initializer.itemID, included: false) }
+            if mixed { capture.selectShellParent(included: true) }
+            if scenario == "mixed" {
+                capture.addShellScripts([script]); await capture.waitForCompletion()
+                capture.selectCollapsedShellScripts(included: true)
+                capture.resolveShellParent(capture.shellParentConsent!, choice: .includeScripts); await capture.waitForCompletion()
+            }
+            let count = partial ? 4 : mixed ? 4 : 2
+            let domains = partial || functionConflict ? 2 : mixed ? 3 : 1
+            let archive = root.appendingPathComponent(scenario + ".mbt")
+            precondition(capture.selectedItemCount == count && capture.selectedDomainCount == domains)
+            capture.prepare(destination: archive); await capture.waitForCompletion()
+            precondition(capture.state == .confirmation, "Prepare: \(String(describing: capture.failure))")
+            capture.create(); await capture.waitForCompletion()
+            precondition(capture.state == .result && capture.publication?.bundle.functionalDomainCount == domains,
+                         "Save: \(String(describing: capture.failure))")
+            let target = root.appendingPathComponent(scenario + "-home")
+            try fm.createDirectory(at: target, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            let rc = target.appendingPathComponent(".zshrc")
+            if partial { try write("export MACSEED_B5_GUI_ROOT=other\n", rc) }
+            if functionConflict { try write("greet() { print existing; }\n", target.appendingPathComponent(".zprofile")) }
+            let location = CoreLocation(root: source.root, python: source.python, home: target, temporaryBase: root,
+                toolDirectories: [tools], applicationBundle: source.applicationBundle)
+            let restore = RestoreModel(runtime: runtime, location: location)
+            restore.choose(archive); await restore.waitForCompletion()
+            precondition(restore.state == .review && restore.selectedItemCount == 0, "Inspect: \(String(describing: restore.failure))")
+            if !mixed {
+                var malformed = restore.inspection!
+                malformed.shellFunctionalCounts?["variables_path"] = count + 1
+                precondition((try? malformed.validate()) == nil)
+                for feature in [["shell-state": 3], ["shell-state": 2, "unknown-required": 1]] {
+                    malformed = restore.inspection!
+                    malformed.requiredFeatures = feature
+                    precondition((try? malformed.validate()) == nil)
+                }
+            }
+            let env = restore.shellEnvironmentItems
+            precondition(env.count == (partial ? 3 : 2) && env.allSatisfy { $0.environment != nil })
+            let ids = Set(env.map(\.id))
+            restore.selectShellItems(ids, included: true)
+            precondition(restore.selectedAreaCount == 1 && restore.selectedItemCount == env.count && restore.authorizedShellScripts.isEmpty)
+            if mixed {
+                restore.selectShellParent(included: true, commandsOnly: true)
+                if scenario == "mixed" {
+                    let consent = restore.shellParentConsent!
+                    let previous = restore.selection
+                    restore.resolveShellParent(consent, choice: .cancel)
+                    precondition(restore.selection == previous && restore.authorizedShellScripts.isEmpty)
+                    restore.selectShellParent(included: true, commandsOnly: true)
+                    restore.resolveShellParent(restore.shellParentConsent!, choice: .includeScripts)
+                }
+            }
+            precondition(restore.selectedAreaCount == domains && restore.selectedItemCount == count)
+            let selection = restore.selection
+            let pristine = try snapshot(target)
+            let check = EnvironmentStatusModel(runtime: runtime, location: location)
+            func compare() async -> [DisplayItem] {
+                check.selectBundle(archive); check.compare(); await check.waitForCompletion()
+                precondition(check.state == .result, "Check: \(String(describing: check.failure))")
+                return check.presentation!.categories.first { $0.id == "shell-zsh" }!.items
+            }
+            let initial = await compare()
+            precondition(initial.contains { $0.status == .missing }, "Initial Check: \(initial.map { ($0.title, $0.status) })")
+            if partial {
+                precondition(initial.contains { $0.status == .different } && initial.contains { $0.status == .unverified })
+            }
+            let render = scenario == "mixed" && CommandLine.arguments.contains("--environment-lifecycle-only") && !CommandLine.arguments.contains("--no-renders")
+            let tree = DeveloperSelectionGroup.disclosureIDs(["shell-zsh", ShellCommandPresentation.commandsID,
+                DeveloperSelectionGroup.environmentID, ShellCommandPresentation.scriptsID])
+            if render { try renderLifecycle(RestoreSelectionContent(model: restore, expansion: .constant(tree)), expected: "Variables & PATH") }
+            restore.refreshPreview(); await restore.waitForCompletion()
+            precondition(restore.state == .preview && restore.canRebuild, "Preview \(scenario): \(String(describing: restore.failure)), \(String(describing: restore.preparation?.plan))")
+            if functionConflict {
+                let plan = restore.preparation!
+                let skipped = plan.plan.filter { $0.itemID.hasPrefix("shell-function:") }
+                precondition(skipped.count == 1 && plan.shellSkippedItems == [skipped[0].itemID])
+                precondition(plan.isItemLocalSkip(skipped[0]) && skipped[0].disposition == "conflict")
+                let planned = Set(plan.plan.filter { $0.disposition == "planned" }.map(\.itemID))
+                precondition(planned == Set(selection.items["shell-zsh"]!).subtracting([skipped[0].itemID]) && ids.isSubset(of: planned))
+                let preview = RestoreTaskPresentation(preview: restore.preview!, plan: plan)
+                precondition(preview.domains.flatMap(\.items).contains { $0.sourceItemID == skipped[0].itemID })
+                precondition(try! snapshot(target) == pristine)
+                try write(provider, profile)
+                print("PASS: Core skipped a conflicting Function and Native displayed Preview with independent Variables & PATH planned")
+                continue
+            }
+            if !mixed {
+                let intervening = Data("# changed after Preview\n".utf8)
+                try intervening.write(to: rc, options: .withoutOverwriting)
+                restore.requestRebuild(); restore.confirmRebuild(); await restore.waitForCompletion()
+                let protected = try Data(contentsOf: rc)
+                precondition(runtime.termination?.terminal?.code == "stale_plan" && protected == intervening)
+                precondition(runtime.mutationMayHaveStarted == false)
+                try fm.removeItem(at: rc)
+            }
+            restore.back(); precondition(restore.selection == selection && restore.state == .review)
+            restore.refreshPreview(); await restore.waitForCompletion()
+            precondition(restore.selection == selection && restore.canRebuild)
+            let preview = restore.preview!, plan = restore.preparation!
+            if partial { precondition(Set(plan.shellSkippedItems ?? []) == ids) }
+            let entry = plan.plan.first { $0.itemID.hasPrefix("shell-variable:") }!
+            let unrelated: [String: CoreJSON] = ["domain": .string("shell-zsh"), "item_id": .string(entry.itemID),
+                "predicate": .string("script_file"), "conformity": .string("verified"), "support": .string("supported")]
+            precondition(!RestoreTaskPresentation.hasVerifiedRequirements(entries: [entry], observations: [unrelated], operations: []))
+            if render { try renderLifecycle(RestoreView(model: restore, runtime: runtime, categoryExpansion: .constant(true)), expected: "Variables & PATH") }
+            restore.requestRebuild(); precondition(restore.state == .confirming)
+            restore.cancelRebuildConfirmation(); precondition(restore.state == .preview)
+            let beforeExecute = try snapshot(target); precondition(pristine == beforeExecute)
+            restore.requestRebuild(); restore.confirmRebuild(); await restore.waitForCompletion()
+            precondition(restore.state == .result, "Execute \(scenario): \(String(describing: restore.failure))")
+            let result = restore.executionResult!
+            let tasks = RestoreTaskPresentation(preview: preview, plan: plan, events: restore.categoryPresentationEvents,
+                result: result, executing: true, operationProgress: true)
+            let summary = RestoreResultSummary(domains: tasks.automaticDomains, result: result, appStore: tasks.appStore)
+            let verified = tasks.domains.flatMap(\.items).filter { $0.resultLabels.contains("Verified") }
+            precondition(verified.count == (partial ? 1 : count), "Verified \(scenario): \(verified.map(\.resultLabels))")
+            if !partial { precondition(summary.attentionCount == 0 && result.outcome == .clean, "Result \(scenario): \(summary.issues.map(\.id))") }
+            else { precondition(summary.attentionCount != 0 && verified.first?.sourceItemID?.hasPrefix("shell-alias:") == true) }
+            if render { try renderLifecycle(RestoreView(model: restore, runtime: runtime), expected: "Variables & PATH") }
+            let after = try String(contentsOf: rc, encoding: .utf8)
+            precondition(partial ? after == "export MACSEED_B5_GUI_ROOT=other\n" + alias : after == variable + path + (mixed ? alias : ""))
+            precondition(!fm.fileExists(atPath: target.appendingPathComponent(".zprofile").path))
+            let stamp = try fm.attributesOfItem(atPath: rc.path)
+            let final = await compare()
+            precondition(final.filter { $0.status == .matching }.count == verified.count)
+            if !partial {
+                precondition(check.presentation?.needsAttention == false)
+                restore.refreshPreview(); await restore.waitForCompletion()
+                precondition(restore.state == .preview && !restore.canRebuild && restore.preparation?.hasComparedExecutableChanges == false)
+                restore.requestRebuild(); precondition(restore.state == .preview)
+            }
+            if mixed {
+                let section = check.presentation!.sections.flatMap(\.entries).first { $0.id == DeveloperSelectionGroup.shell.id }!
+                precondition(section.children.map(\.title) == ["Custom Commands", "Variables & PATH"])
+                precondition(Set(section.children.flatMap(\.items).map(\.id)).count == section.category.items.count)
+            }
+            if render { try renderLifecycle(EnvironmentComparisonView(result: check.presentation!, categoryExpansion: .constant(EnvironmentComparisonView.disclosureIDs(check.presentation!))), expected: "Variables & PATH") }
+            let unchanged = try fm.attributesOfItem(atPath: rc.path)
+            for key: FileAttributeKey in [.systemFileNumber, .modificationDate] {
+                precondition((unchanged[key] as? NSObject) == (stamp[key] as? NSObject))
+            }
+            print("PASS: Native \(scenario) Capture/Bundle/Selection/Preview/Execute/Verified Result/Check, \(domains) functional domains and \(count) selected items")
+        }
+        let preserved = try snapshot(source.home); precondition(preserved == original)
+    }
+
+    @MainActor static func renderLifecycle<V: View>(_ view: V, expected: String) throws {
+        for width in [580, 985] {
+            let host = NSHostingView(rootView: view.padding(12).frame(width: CGFloat(width)).fixedSize(horizontal: false, vertical: true)
+                .background(Color(nsColor: .windowBackgroundColor)))
+            host.frame.size = host.fittingSize
+            host.layoutSubtreeIfNeeded()
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate
+            try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
+            let labels = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            precondition(labels.localizedCaseInsensitiveContains(expected), "Rendered \(width) pt: \(labels)")
+        }
+    }
+
+    @MainActor static func mixedShellCore(root: URL, repository: URL, core: URL, home: URL, bin: URL, python: URL, guiOnly: Bool = false, environmentOnly: Bool = false) async throws {
         let fm = FileManager.default
         // Reuse the prepared, authenticated parser; no user-installed executable.
         let preparedApp = repository.appendingPathComponent("desktop/Macseed/build/Debug/Macseed.app")
@@ -1673,6 +2213,11 @@ import Vision
         descriptor["CoreRoot"] = core.path; descriptor["PythonExecutable"] = python.path
         try PropertyListSerialization.data(fromPropertyList: descriptor, format: .xml, options: 0).write(to: resources.appendingPathComponent("CoreRuntime.plist"))
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home.path)
+        if environmentOnly {
+            try await environmentLifecycle(root: root, repository: repository, source: CoreLocation(root: core, python: python,
+                home: home, temporaryBase: root, toolDirectories: [bin], applicationBundle: app), tools: bin)
+            return
+        }
         var definitions = ["alias listing='ls -la'", "complex() {\n for x in a b; do\n cat <<'EOF'\nprivate literal é\nEOF\n done\n}",
                            "alias location='pwd'", "ordinary() { :; }", "alias platform='uname -s'", "alias who='whoami'", "third() { :; }"]
         if guiOnly {
@@ -1828,7 +2373,7 @@ import Vision
         print("PASS: active Native → production Core mixed 4 Alias + 3 Function Capture/Bundle/Restore/Verify/Check, parent None/Partial/All, explicit all IDs and separate Scripts consent")
     }
 
-    @MainActor static func realCore(root: URL, repository: URL, python: URL, shellOnly: Bool = false, mixedOnly: Bool = false, guiOnly: Bool = false) async throws {
+    @MainActor static func realCore(root: URL, repository: URL, python: URL, shellOnly: Bool = false, mixedOnly: Bool = false, guiOnly: Bool = false, environmentOnly: Bool = false) async throws {
         let started = ProcessInfo.processInfo.systemUptime
         defer { print(String(format: "TIMING: CaptureTests.realCore (including Workspace/overlap) %.3f s", ProcessInfo.processInfo.systemUptime - started)) }
         // Automated disposable HOME/tools only; never the real-Mac manual gate.
@@ -1867,8 +2412,8 @@ import Vision
         try write("private ordinary state", generated.appendingPathComponent("sentinel"))
         try write("private ordinary selection", core.appendingPathComponent("config/blueprint.conf"))
         let beforeHome = try snapshot(home), beforeConfig = try snapshot(core.appendingPathComponent("config"))
-        if mixedOnly {
-            try await mixedShellCore(root: root, repository: repository, core: core, home: home, bin: bin, python: python, guiOnly: guiOnly)
+        if mixedOnly || environmentOnly {
+            try await mixedShellCore(root: root, repository: repository, core: core, home: home, bin: bin, python: python, guiOnly: guiOnly, environmentOnly: environmentOnly)
             return
         }
         if shellOnly {

@@ -35,7 +35,9 @@ struct RestoreAreaSelectionView: View {
             HStack(spacing: RestoreRowGrid.spacing) {
                 if area.selectable {
                     NativeSelectionCheckbox("", state: model.selectionState(area), accessibilityTitle: "Select " + area.label) {
-                        model.selectArea(area.id, included: $0)
+                        if area.id == "shell-zsh" && area.selectionMode == "items" {
+                            model.selectShellItems(Set(area.items.map(\.id)), included: $0)
+                        } else { model.selectArea(area.id, included: $0) }
                     }.frame(width: RestoreRowGrid.checkboxWidth, height: 28).padding(.leading, hierarchyIndent)
                 } else { Color.clear.frame(width: RestoreRowGrid.checkboxWidth, height: 28).padding(.leading, hierarchyIndent).accessibilityHidden(true) }
                 if Self.hasDisclosure(area) {
@@ -112,7 +114,7 @@ struct RestoreAreaSelectionView: View {
                 CaptureStatusText(title: "Needs Attention", state: .attention)
             }
             if area.selectable && area.selectionMode == "items" {
-                CaptureStatusText(title: CaptureStatusText.selectionCount(model.selectedItems[area.id]?.count ?? 0, total: area.items.count),
+                CaptureStatusText(title: CaptureStatusText.selectionCount((model.selectedItems[area.id] ?? []).intersection(area.items.map(\.id)).count, total: area.items.count),
                     secondary: area.id != "shell-zsh")
             }
         }
@@ -199,9 +201,17 @@ struct RestoreSelectionContent: View {
     var expandAll: Binding<Bool>? = nil
     @RestoreViewState<Set<String>> private var expanded = []
     private var areas: [CoreRestoreInspection.Area] { RestoreSelectionPresentation.ordered(model.selectionAreas) }
+    private var environmentIDs: Set<String> { Set(model.shellEnvironmentItems.map(\.id)) }
+    private var environmentSelected: Set<String> { environmentIDs.intersection(model.selectedItems["shell-zsh"] ?? []) }
+    private var commandsState: SelectionState {
+        let aliases = areas.first { $0.id == "shell-zsh" }?.items.filter { !environmentIDs.contains($0.id) } ?? []
+        let children = aliases.map(\.id) + model.parentShellScripts.map(\.id)
+        return SelectionState.summarize(selected: (model.selectedItems["shell-zsh"] ?? []).union(model.authorizedShellScripts), children: children)
+    }
     private func disclosureIDs(advanced: Bool) -> Set<String> {
         RestoreSelectionPresentation.disclosureIDs(areas, advanced: advanced, secureAvailable: model.inspection?.secureComponent == true)
             .union(advanced && !model.shellScriptCandidates.isEmpty ? [ShellCommandPresentation.scriptsID] : [])
+            .union(advanced && !environmentIDs.isEmpty ? [DeveloperSelectionGroup.environmentID] : [])
     }
     private var treeExpansion: Binding<Set<String>> {
         if let expansion { return expansion }
@@ -228,9 +238,23 @@ struct RestoreSelectionContent: View {
                     accessibilityTitle: "Select " + group.title, mixedSelectsAll: group != .shell) { model.selectDeveloperGroup(group, included: $0) }
                     .disabled(!model.developerGroupAvailable(group) || model.state != .review || model.runtime.isActive)) },
                 developerSummary: { DeveloperSelectionGroup.summary(model.developerGroupState($0), available: model.developerGroupAvailable($0)) },
-                shellCustomCommands: areas.contains { $0.id == "shell-zsh" && $0.selectionMode == "items" },
-                shellCommandsSelection: AnyView(NativeSelectionCheckbox("", state: model.developerGroupState(.shell),
-                    accessibilityTitle: "Select Custom Commands", mixedSelectsAll: false) { model.selectDeveloperGroup(.shell, included: $0) }
+                shellCustomCommands: !model.shellScriptCandidates.isEmpty || areas.contains { $0.id == "shell-zsh" && $0.selectionMode == "items" && $0.items.contains { !environmentIDs.contains($0.id) } },
+                shellCommandsSummary: DeveloperSelectionGroup.summary(commandsState, available: true),
+                environmentStatus: AnyView(CaptureStatusText(title: CaptureStatusText.selectionCount(environmentSelected.count, total: environmentIDs.count), secondary: environmentSelected.isEmpty)),
+                environmentSelection: AnyView(NativeSelectionCheckbox("", state: SelectionState.summarize(selected: environmentSelected, children: Array(environmentIDs)),
+                    accessibilityTitle: "Select Variables & PATH", mixedSelectsAll: false) { model.selectShellItems(environmentIDs, included: $0) }),
+                environmentItems: environmentIDs.isEmpty ? nil : AnyView(VStack(alignment: .leading, spacing: 0) {
+                    ForEach(model.shellEnvironmentItems) { item in
+                        CaptureItemSelectionRow(title: item.label, included: Binding(get: { environmentSelected.contains(item.id) },
+                            set: { model.selectItem("shell-zsh", item: item.id, included: $0) }),
+                            helpButton: item.environment.map { detail in
+                                ContextualHelpButton(id: item.id, title: item.label, description: detail.explanation,
+                                    information: detail.context + " · " + detail.origin, hint: "Show declaration details", aboveFooter: true)
+                            })
+                    }
+                }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset + 2 * CaptureReviewPresentation.hierarchyStep).padding(.trailing, 16)),
+                shellCommandsSelection: AnyView(NativeSelectionCheckbox("", state: commandsState,
+                    accessibilityTitle: "Select Custom Commands", mixedSelectsAll: false) { model.selectShellParent(included: $0, commandsOnly: true) }
                     .disabled(!model.developerGroupAvailable(.shell) || model.runtime.isActive)),
                 shellScripts: AnyView(ShellScriptSelectionView(scripts: model.shellScriptCandidates,
                     available: Set(model.availableShellScripts.map(\.id)), selected: model.authorizedShellScripts,
@@ -239,6 +263,9 @@ struct RestoreSelectionContent: View {
                     selectAll: model.selectAllShellScripts, inspectionError: model.shellSelectionIssue, collapsedSelection: model.selectCollapsedShellScripts)),
                 summary: { RestoreSelectionPresentation.summary($0, model: model) },
                 attention: { rows in rows.contains { !$0.selectable || $0.reason != nil } ? "Saved Requirements Need Attention" : nil }) { area in
+                    let area = area.id == "shell-zsh" ? CoreRestoreInspection.Area(domain: area.domain, label: area.label, selectionMode: area.selectionMode,
+                        availability: area.availability, sourcePresent: area.sourcePresent, captureSelected: area.captureSelected, reason: area.reason,
+                        items: area.items.filter { !environmentIDs.contains($0.id) }) : area
                     if area.id != "shell-zsh" || !area.items.isEmpty || area.selectionMode != "items" {
                     RestoreAreaSelectionView(model: model, area: area,
                         expansion: WorkflowExpansion.binding(area.id, in: treeExpansion),
@@ -1021,15 +1048,19 @@ struct RestoreExecutionCategories: View {
         domains.flatMap { domain in
             guard domain.id == "shell-zsh" else { return [domain] }
             let scripts = domain.items.filter { $0.sourceItemID?.hasPrefix("shell-script:") == true }
-            guard !scripts.isEmpty else { return [domain] }
-            let aliases = domain.items.filter { $0.sourceItemID?.hasPrefix("shell-script:") != true }
+            let environment = domain.items.filter { CoreCaptureInventoryRow.Item.isEnvironmentID($0.sourceItemID ?? "") }
+            guard !scripts.isEmpty || !environment.isEmpty else { return [domain] }
+            let aliases = domain.items.filter { $0.sourceItemID?.hasPrefix("shell-script:") != true && !CoreCaptureInventoryRow.Item.isEnvironmentID($0.sourceItemID ?? "") }
             let aliasDomain = TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol,
                 items: aliases, activityState: domain.activityState, resultCategoryIssue: domain.resultCategoryIssue,
                 resultProblemDomains: domain.resultProblemDomains, resultCategoryMessage: domain.resultCategoryMessage,
                 resultProblemMessages: domain.resultProblemMessages, confirmedFinalState: domain.confirmedFinalState)
             let scriptDomain = TaskDomainPresentation(id: ShellCommandPresentation.scriptsID, title: "Scripts",
                 symbol: "applescript", items: scripts)
-            return (aliases.isEmpty && !domain.resultCategoryIssue ? [] : [aliasDomain]) + [scriptDomain]
+            let environmentDomain = TaskDomainPresentation(id: DeveloperSelectionGroup.environmentID, title: "Variables & PATH",
+                symbol: "list.bullet.rectangle", items: environment)
+            return (aliases.isEmpty && !domain.resultCategoryIssue ? [] : [aliasDomain])
+                + (scripts.isEmpty ? [] : [scriptDomain]) + (environment.isEmpty ? [] : [environmentDomain])
         }
     }
     static func disclosureIDs(_ domains: [TaskDomainPresentation], appStore: AppStoreRestorePresentation? = nil) -> Set<String> {
@@ -1050,7 +1081,7 @@ struct RestoreExecutionCategories: View {
         return result
     }
     static func sectionTitle(_ domain: TaskDomainPresentation) -> String? {
-        if domain.id == ShellCommandPresentation.scriptsID { return "For Experienced Users" }
+        if [ShellCommandPresentation.scriptsID, DeveloperSelectionGroup.environmentID].contains(domain.id) { return "For Experienced Users" }
         if DeveloperSelectionGroup.group(for: domain.id) != nil { return "For Experienced Users" }
         switch CaptureHierarchy.group(for: domain.id) {
         case .applicationsTools, .macOSSettings, .vscode: return "Standard Setup"
@@ -1059,7 +1090,8 @@ struct RestoreExecutionCategories: View {
         }
     }
     private func categoryTitle(_ domain: TaskDomainPresentation) -> some View {
-        WorkspaceCategoryTitle(id: domain.id, title: domain.title, fallbackSymbol: domain.symbol)
+        WorkspaceCategoryTitle(id: domain.id, title: domain.title, fallbackSymbol: domain.symbol,
+            usesProvidedTitle: domain.id == "shell-zsh")
     }
     private func categoryStatus(_ domain: TaskDomainPresentation) -> some View {
         Group {

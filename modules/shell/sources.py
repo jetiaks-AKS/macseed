@@ -618,7 +618,19 @@ def publish_file(home, path, additions, validate):
     return publish_content(home, path, candidate, validate)
 
 
-def publish_content(home, path, candidate, validate, mode=0o600, *, limit=base.MAX_BYTES, prepare=None, verify=None, tracked=False, create_only=False):
+def inserted_content(original, insertions):
+    parts, previous = [], 0
+    for offset, addition in insertions:
+        if (type(offset) is not int or not previous <= offset <= len(original) or
+                offset not in (0, len(original)) and original[offset-1:offset] != b'\n' or
+                not isinstance(addition, bytes) or not addition.endswith(b'\n')):
+            raise base.Invalid('candidate_invalid')
+        parts.extend((original[previous:offset], addition))
+        previous = offset
+    return b''.join([*parts, original[previous:]])
+
+
+def publish_content(home, path, candidate, validate, mode=0o600, *, limit=base.MAX_BYTES, prepare=None, verify=None, tracked=False, create_only=False, insertions=None):
     # Callers qualify the candidate; this publisher preserves metadata and races.
     with parent(home, path) as (directory, name, recheck):
         try:
@@ -627,7 +639,10 @@ def publish_content(home, path, candidate, validate, mode=0o600, *, limit=base.M
             original, old, metadata = b'', None, None
         if create_only and old is not None:
             raise base.Invalid('target_changed')
-        if len(candidate) > limit or (old is not None and not candidate.startswith(original)):
+        if (len(candidate) > limit or
+                (insertions is not None and (not tracked or create_only or prepare is not None or verify is not None)) or
+                (insertions is not None and inserted_content(original, insertions) != candidate) or
+                (insertions is None and old is not None and not candidate.startswith(original))):
             raise base.Invalid('candidate_invalid')
         document = document_id(directory, name, old) if old is not None and old.st_flags else None
         if document is not None:

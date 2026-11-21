@@ -346,10 +346,12 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         shell_value = None
         shell_evidence = None
         function_value = None
+        typed_plan = None
         if 'shell-zsh' in requested_selection['items']:
             function_value = bundle.typed_shell_load(stage / 'generated/shell/zshrc.snapshot')
             if function_value is not None:
-                shell_evidence = bundle.shell_functions_contract().plan(function_value, os.environ['HOME']).evidence
+                typed_plan = bundle.shell_functions_contract().plan(function_value, os.environ['HOME'])
+                shell_evidence = typed_plan.evidence
             shell_value = bundle.shell_load(stage / 'generated/shell/zshrc.snapshot')
             if shell_value is not None and shell_value['version'] in (2, 3, 4, 5):
                 shell_evidence = bundle.shell_contract().evidence(shell_value, os.environ['HOME'])
@@ -658,9 +660,14 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         if function_value is not None:
             contract = bundle.shell_functions_contract()
             scripts = contract.state.script_value(function_value)
+            if typed_plan.skipped:
+                blocked = {row['item_id'] for row in records if row['domain'] == 'shell-zsh' and row['action'] == 'none'
+                           and row['disposition'] in ('blocked', 'conflict', 'unknown')}
+                if not typed_plan.skipped.issubset(blocked):
+                    raise ValueError('shell_observation_changed')
+                summary['shell_skipped_items'] = sorted(typed_plan.skipped)
             if scripts is not None:
                 summary['shell_script_candidates'] = contract.state.legacy().selection_candidates(scripts)
-                typed_plan = contract.plan(function_value, os.environ['HOME'])
                 required_scripts = [dict(id=r['id'].removeprefix('shell-script:'), path=r['key'])
                     for r, status, policy in typed_plan.rows if r['kind'] == 'script' and status == 'missing' and policy == 'create']
                 if required_scripts:
@@ -673,7 +680,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             summary['selected_item_counts']['shell-zsh'] = len(requested_selection['items']['shell-zsh'])
         if not requirements['ready'] or summary['error_count']:
             for row in records:
-                if row['domain'] == 'shell-zsh' and row['item_id'].startswith(('shell-alias:', 'shell-script:', 'shell-function:')) and row['disposition'] == 'planned':
+                if row['domain'] == 'shell-zsh' and row['item_id'].startswith(('shell-alias:', 'shell-script:', 'shell-function:', 'shell-variable:', 'shell-path-operation:', 'shell-initializer:')) and row['disposition'] == 'planned':
                     row.update(action='none', disposition='blocked', reason='prerequisite_unmet')
             summary['has_executable_changes'] = any(row['disposition'] == 'planned' for row in records) or include_secure
         dependencies = ((ssh_resolution.dependencies.projection(resolved['dependencies']), resolved['dependency_digest'])
@@ -1066,7 +1073,9 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                         current_functions = bundle.shell_functions_contract().plan(function_value, os.environ['HOME'])
                         if bundle.checked_file(stage.parent / 'shell-observation').decode() != current_functions.evidence:
                             raise ExecuteFailed('stale_plan')
-                        if any(status not in ('matching', 'missing') for _, status, _ in current_functions.rows):
+                        if (current_functions.skipped != set(plan.get('shell_skipped_items', ())) or
+                                any(status not in ('matching', 'missing') and row['id'] not in current_functions.skipped
+                                    for row, status, _ in current_functions.rows)):
                             raise ExecuteFailed('preview_observation_failed')
                         shell_environment['MACSEED_SHELL_EXPECTED_EVIDENCE'] = current_functions.evidence
                         shell_environment['MACSEED_SHELL_SCRIPT_APPROVALS'] = json.dumps(shell_script_ids)
@@ -1505,6 +1514,10 @@ def environment_compare(operation_id, parameters):
                     if typed_functions is not None:
                         owners = {(row['item_id'], row['predicate']) for row in owned.details['verification_records']
                                   if row['domain'] == 'shell-zsh'}
+                        environment_labels = bundle.shell_state_contract().environment.requirement_labels(typed_functions)
+                        if environment_labels:
+                            presentation['shell_environment_labels'] = {i: environment_labels[i] for i, p in owners
+                                if i in environment_labels and p in ('variable_declaration', 'path_operation', 'initializer_declaration')}
                         for kind, predicate in (('alias', 'alias_definition'), ('function', 'function_definition'), ('script', 'script_file')):
                             presentation['shell_' + kind + '_labels'] = {row['id']: row['key'] for row in typed_functions._value['items']
                                 if row['kind'] == kind and (row['id'], predicate) in owners}
@@ -1598,7 +1611,9 @@ def dispatch(version, channel=None):
             raise ValueError("invalid operation")
         operation = value["operation"]
         try:
-            bundle.shell_contract().recovery_contract().expand_request(value)
+            if isinstance(value.get('parameters'), dict) and 'script_manifest' in value['parameters']:
+                bundle.shell_contract().recovery_contract().expand_request(
+                    value, max_declarations=bundle.shell_state_contract().MAX_DECLARATIONS)
         except (OSError, ValueError, TypeError):
             raise ValueError("invalid Scripts request manifest") from None
         required = {"protocol_version", "operation_id", "operation"}
@@ -1634,8 +1649,16 @@ def dispatch(version, channel=None):
             parameters = value['parameters']
             expected = ({'external_identities'} if operation == 'capture_identity_inspect' else
                         {'selection'} if operation == 'capture_prepare' else {'selection', 'destination', 'expected_prepared_capture_id'})
-            optional = {'external_identities'} | ({'shell_script_selection', 'shell_script_policy', 'shell_script_paths'} if operation != 'capture_identity_inspect' else set()) | ({'replacement_sha256', 'shell_script_ids'} if operation == 'capture_execute' else set())
+            optional = {'external_identities'} | ({'shell_script_selection', 'shell_script_policy', 'shell_script_paths', 'shell_environment', 'shell_plaintext_ids'} if operation != 'capture_identity_inspect' else set()) | ({'replacement_sha256', 'shell_script_ids'} if operation == 'capture_execute' else set())
             replacement = 'replacement_sha256' in parameters
+            if 'shell_environment' in parameters and parameters['shell_environment'] is not True:
+                raise ValueError('invalid shell capability')
+            if 'shell_plaintext_ids' in parameters:
+                ids = parameters['shell_plaintext_ids']
+                if (not parameters.get('shell_environment') or type(ids) is not list or len(ids) > 512
+                        or any(type(i) is not str or not re.fullmatch(r'shell-(?:variable|path-operation|initializer):[0-9a-f]{64}', i) for i in ids)
+                        or len(set(ids)) != len(ids)):
+                    raise ValueError('invalid shell selection')
             if 'shell_script_policy' in parameters and parameters['shell_script_policy'] not in ('opaque-file-v4', 'opaque-file-v5'):
                 raise ValueError('unsupported script policy')
             if 'external_identities' in parameters and parameters['external_identities'] is not True:
@@ -1829,6 +1852,7 @@ def dispatch(version, channel=None):
         }
         result['features']['shell_script_transfer'] = dict(version=5, policy='opaque-file-v5', legacy_policies=['opaque-file-v4'], inspection='capture_script_inspect', max_files=128, max_file_bytes=1048576, max_content_bytes=16777216, max_manifest_bytes=262144, request_manifest='shell-scripts-request.json')
         result['features']['secure_check'] = dict(version=1, inventory='secure_check_inventory', compare='secure_check_compare', selection_version=2, max_items=32, read_only=True)
+        result['features']['shell_environment_capture'] = dict(version=2, restore_supported=True, explicit_plaintext=True)
         result['features']['shell_functions_capture'] = dict(version=1, required_feature={'shell-state': 1},
             minimum_macos='14.4', explicit_items=True, mixed_legacy_selection=True, restore_supported=True)
         result['features']['shell_functions_restore'] = dict(version=1, predicate='function_definition',

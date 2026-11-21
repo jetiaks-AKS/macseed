@@ -139,9 +139,9 @@ Capture so users can add files when Discovery found none. **Plugins & Themes** i
 fourth category, reserved until useful Core support and selected/saved items exist.
 Startup files, ZDOTDIR, source paths and dependencies are provenance, not additional
 categories. Legacy whole-file requirements appear as **Settings → Saved Zsh file**
-with their existing Core identity and restoration policy. Aliases and Functions have
-unified typed Capture/Restore/Verify/Check and Native selection support below. Variables
-& PATH, Shell Settings and Plugins & Themes remain future capabilities, not empty placeholders.
+with their existing Core identity and restoration policy. Aliases, Functions and
+qualified Variables & PATH requirements support Capture, Restore, Verify and Check
+with Native selection. Shell Settings and qualified Plugins & Themes remain planned.
 
 ### Structural parser foundation
 
@@ -157,6 +157,156 @@ The [internal parser interface](../core/SHELL-PARSER.md) owns invocation, admiss
 resource limits, reproducible builds and remaining qualification gates. Source/load
 context, dependency and activation qualification remain separate from the codec
 foundation below; structural success alone cannot authorize publication.
+
+### Variables & PATH Capture (B5B)
+
+Explicit Capture can save a variable declaration, a PATH operation, or a recognized
+initializer within the existing Shell domain. Archive version 1 negotiates
+`shell-state:2` for a selection containing any of these items. The typed v2
+snapshot uses the same member paths as v1. B4-only selections retain the existing
+format. Current Core can inspect and plan v2 recovery. Each selected requirement
+undergoes target qualification in Preview and again before publication.
+
+Core records parser-bounded bytes, declaration form, ordered literal/reference words,
+quoting of references, attributes, guard, source span and load occurrences. A physical
+declaration has one ID derived from kind, portable source, binding and occurrence
+ordinal within that family. Repeated loads keep their own context and source site.
+A group of operands on one declaration builtin is indivisible. Simple scalar defaults
+retain the unset/empty operator. Static indexed/associative assignments, array
+appends, bounded decimal integer arithmetic (addition, subtraction and multiplication)
+and shell attributes retain their original operations.
+PATH keeps its scalar or array interface, splices, resets, empty components and
+explicit uniqueness attributes. No process PATH is sampled.
+
+Core records the latest preceding declaration for symbolic reads, including
+appends, attributes, tied PATH interfaces and the nvm recipe's `NVM_DIR`.
+When Capture or Restore narrows a v2 selection, the private snapshot can carry
+the inner required contract `selection-evidence:1`. It retains fingerprints of
+omitted parser-admitted declarations, their saved source size and digest, byte
+position, family ordinal, load-route evidence and affected sets of preceding
+bindings. Only selected items have payloads. Scripts never supply declaration
+fingerprints or receive transfer consent through this contract.
+
+On the target, Core can use an omitted declaration after observing its exact
+bytes and load visits and qualifying its prerequisites. A uniquely ordered
+subsequence can identify physical occurrences after a deletion shifts their
+ordinals. A shifted traversal index preserves the original visit when the
+physical route agrees. A displaced source-command offset needs a unique
+literal load in a fully inspected parent. Repeated or opaque load sites
+require their original placement. Ambiguous occurrences stay unresolved.
+A historical narrow v2
+snapshot can use its whole-source fingerprint when the candidate reproduces
+the original file and an independent observation identifies its retained
+predecessor. Narrowing a complete historical
+snapshot can use the declarations actually saved in that archive.
+
+Recognized tool recipes include Homebrew shellenv and bounded pyenv, mise, fnm,
+direnv, nvm, asdf and Cargo initialization forms. Go and other tool directories
+use ordinary variable/PATH declarations. Capture can retain the declaration
+without qualifying a target executable or activation. Unrecognized command
+substitution, unsafe expansions and secret indicators are excluded.
+
+Checking a B5 item authorizes its plaintext capture. Native sends that item's ID
+with Prepare and Execute. Ordinary declarations use the same checkbox and
+existing Capture confirmation. Custom Commands selection grants no B5 consent.
+Secret indicators exclude entire declarations, including array keys and values,
+as well as dependent declarations and private source paths. Short ordinary
+literals may be indistinguishable from credentials, so custom plaintext needs review.
+Values stay out of public inventory. Core supplies bounded labels, descriptions,
+startup contexts and safe provenance. New whole-file fallback admits only benign
+comments, bounded editor/locale preferences and simple option lines after the
+existing safety checks. Other custom values require typed review. Historical
+archives keep their original reader.
+
+### Variables & PATH recovery (B5C)
+
+Core compares typed operations in their saved startup stage, load chain and order.
+A mixed snapshot uses the B4 declaration checks for existing Aliases and Functions,
+including definitions in externally managed sources. For an existing PATH or
+variable declaration, identical source bytes, load sites and statement placement
+can establish conformity across bounded earlier initialization and literal option
+settings. A later opaque evaluator in the same startup stage blocks that proof.
+A bounded evaluator in a subsequent startup stage does not change an independently
+observed declaration’s placement in the earlier stage. With no startup-file writes
+planned, Core can match a byte-identical, unconditional scalar literal assignment
+at a shifted offset in an earlier startup root. Its load visits, declaration order
+and bindings must still qualify. Opaque statements in the same stage retain their
+placement checks. For an existing declaration,
+an unselected binding in the same fingerprinted source can satisfy a symbolic read
+when the target parser verifies its preceding assignment in every required context.
+For a missing consumer, recovery can use an independently qualified producer
+when selection retained its declaration and binding evidence.
+Provider lookup still needs independent target evidence and qualified preceding startup state.
+In a bounded partial startup graph, a retained declaration proven at its exact
+saved site can anchor a selected tail append. Core checks every load visit,
+the order of literal initialization and option statements, and the selected
+dependencies in the reparsed candidate. Earlier login-stage additions crossing
+a later literal initialization require a scalar literal assignment and an
+independent retained anchor after the initialization. Managed destinations and
+unqualified insertion points remain blocked.
+A matching declaration stays in place. A missing declaration can be added to its
+qualified original destination, including a standard startup file that is absent.
+Retained declarations and source sites can anchor insertion at line boundaries.
+Core reparses the combined B4/B5 candidate before protected publication. Existing
+bytes, repeated loads and target-local PATH are preserved. An unresolved reference,
+conflicting declaration or unsafe destination blocks its requirement and any
+dependent binding sequence. Core may publish independent requirements only after
+reparsing a candidate that excludes all blocked bytes. Preview binds those item-local
+skips to the plan. A complete lexical observation can establish a missing
+independent assignment even when the original insertion site cannot be proven.
+An existing consumer whose preceding binding requires recovery stays unverified
+in Check. Preview plans that dependency and preserves the consumer's bytes.
+Across files Core publishes missing producers before their consumers and blocks
+cyclic file-publication dependencies. Changed evidence invalidates preparation. Result and Check retain
+the failed requirements individually.
+
+The provider contract is finite. Core reads independently identified target files
+without running a provider. Homebrew shellenv accepts an omitted or explicit Zsh
+argument. The reviewed Homebrew launcher, dispatcher, shellenv and release-specific helper hashes cover
+5.0.0, 7.0.11 and 7.0.15. Both 7.x profiles require the reviewed OS helper.
+The 7.0.11 dispatcher calls `id` before shellenv. Its reviewed launcher resets
+PATH with `/usr/bin` first. Core checks ownership and permissions along
+`/usr/bin/id` and verifies its Apple signature and `com.apple.id` identifier
+during each preparation.
+A custom prefix needs a root-owned target paths.d enrollment.
+Additional brew.env overrides require separate qualification.
+Homebrew formula launchers for pyenv (full or shims), mise, fnm and direnv require
+a core bottle receipt, matching architecture and protected installation chain.
+Native formula executables require reviewed bottle member hashes (fnm 1.39.0,
+direnv 2.38.2 and mise 2026.11.10), compatible deployment and system loader
+prerequisites, and macOS signature verification. The pyenv 2.6.14
+libexec tree, bundled rehash hooks and Zsh completion are hash-bound. Custom
+hooks, plugin overrides and unreviewed native helpers block qualification. Default
+rehash also needs a proven leading pyenv bin directory and no competing pyenv shim.
+Full interactive init enumerates commands to generate a shell function and needs
+a completely qualified search path. Shims-only init with explicit no-rehash
+avoids both lookups. An explicit HOME-relative mise
+launcher can link to the qualified installation or match an official standalone
+v2025.11.7 or v2026.11.10 executable for the target architecture.
+Legacy asdf uses reviewed 0.15.0 files. Modern asdf shims and static Go and uv paths
+use the ordinary symbolic PATH contract. Cargo's sourced environment requires the
+bounded rustup template and a reviewed native rustup/cargo pair. Guarded nvm
+requires a selected, resolved HOME/XDG directory and a reviewed 0.40.3 or 0.41.0
+script. Automatic Node activation also depends on project/version and executable
+state, so only the qualified `--no-use` variant can be published.
+
+Verify and Check report declaration, PATH operation and initializer predicates.
+A match establishes saved structure, placement and required inspected prerequisites.
+Future process state, project trust, version-manager downloads and third-party
+behavior remain outside this evidence. Virtual environments need independent
+recreation. Framework plugin arrays, themes, prompts and completion require the
+subsequent Shell Settings and Plugins & Themes contracts.
+
+The release boundaries above come from the provider-owned implementations and
+artifacts. [Homebrew shellenv](https://github.com/Homebrew/brew/blob/7.0.15/Library/Homebrew/cmd/shellenv.sh),
+[fnm bottle metadata](https://formulae.brew.sh/api/formula/fnm.json),
+[direnv bottle metadata](https://formulae.brew.sh/api/formula/direnv.json),
+[mise bottle metadata](https://formulae.brew.sh/api/formula/mise.json),
+[pyenv init](https://github.com/pyenv/pyenv/blob/v2.6.14/libexec/pyenv-init),
+[nvm activation](https://github.com/nvm-sh/nvm/blob/v0.41.0/nvm.sh),
+[legacy asdf](https://github.com/asdf-vm/asdf/blob/v0.15.0/asdf.sh),
+[mise releases](https://github.com/jdx/mise/releases) and
+[rustup's environment template](https://github.com/rust-lang/rustup/blob/1.28.2/src/cli/self_update/env.sh).
 
 ### Typed Shell state foundation (B1)
 
@@ -192,9 +342,8 @@ The magic is followed by one strict UTF-8 JSON object. Its exact fields are:
 
 No optional extension bags, saved `qualified`/`eligible` flags or target write
 permissions exist. Unknown fields, kinds, versions/profiles, duplicate JSON keys,
-non-integer numbers and malformed required contracts fail closed. Future
-Variables/PATH and Settings add explicitly supported kind contracts within this
-envelope; B1 contains no placeholder engines or records for them. Changes to shared
+non-integer numbers and malformed required contracts fail closed. Variables & PATH
+uses the [v2 contracts](#variables--path-capture-b5b). Settings remains planned. Changes to shared
 semantics or limits require an explicitly supported profile version.
 Kind contract `script: 1` versions the new descriptor, not the legacy transfer
 policy: its payload validation still uses Scripts v5.
@@ -486,10 +635,12 @@ parser-output bytes and loads are checked before the first publication.
 
 Verify and read-only Bundle Check use `function_definition` with stable Function IDs.
 Match means exact saved definition/source-state reconstruction; missing, differing and
-unverified remain distinct. Partial Shell coverage is retained. When every selected
-typed Shell requirement matches and the only scope limitation is `activation_unknown`,
-the scope is informational: Preview emits `information / shell_activation_unknown`;
-Check retains `resolved / partial` coverage with an `info` diagnostic of that code.
+unverified remain distinct. When observation succeeds and only bounded declaration
+coverage or runtime activation remains unknown, Preview emits
+`information / shell_activation_unknown`. Check retains `resolved / partial`
+coverage with an `info` diagnostic. Each selected item keeps its own outcome.
+An independent source observation failure, such as an unresolved load, retains
+`partial_source_coverage` and a scope warning.
 This resolves selected conformity, not runtime activation. It adds no requirement,
 warning, readiness blocker or attention count. Any unresolved selected predicate,
 conflict or genuine source/dependency limitation retains its actionable evidence.
@@ -601,11 +752,9 @@ Script approvals. A Script carrying a source-manager marker may be created at a 
 missing destination. Create-only publication rechecks the destination and verifies the
 staged bytes and metadata. Existing conflicting or manager-owned targets remain protected. Selecting definitions never selects or installs referenced dependencies.
 Verify/Check retain `alias_definition`, `function_definition` and `script_file` identities.
-When all selected typed Shell predicates match, Core emits resolved partial scope
-coverage with a linked `shell_activation_unknown` information diagnostic. Runtime
-activation and dynamic startup remain unverified. Incomplete coverage affecting
-selected requirements retains `partial_source_coverage` and its warning. Scope
-evidence is separate from the number of verified requirements.
+Typed scope follows the source observation rules above. A missing, conflicting
+or unverified item contributes its own result. Runtime activation and dynamic
+startup remain unverified.
 
 Native uses one Aliases & Functions parent with None/Partial/All states. All-selected
 item mode keeps explicit IDs; compact selection remains enabled for other domains and
@@ -1197,7 +1346,7 @@ These broader dependencies do not reopen the accepted four-object checkpoint.
 Bounded [Functions Restore/Check](#functions-restore-verify--check-b3) follows B2B Capture;
 the later Stage 3C order remains unchanged.
 
-Broader Functions prerequisites, variables/PATH, Shell Settings, broader alias forms, metadata-safe updates
+Broader Functions prerequisites, additional provider profiles, Shell Settings, broader alias forms, metadata-safe updates
 and framework/plugin prerequisites remain the
 [next bounded slices](../../TODO.md#shell--zsh-functional-completion--current).
 Oh My Zsh and plugin-manager configuration is distinct from installed frameworks;

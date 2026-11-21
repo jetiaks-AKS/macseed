@@ -62,6 +62,11 @@ definition's zero-based index, or `-1`; nested definitions are evidence inside t
 parent, not independently selectable items. `depth` is AST depth, not load depth.
 No source text, identifiers, paths, AST dumps or vendor error messages are emitted.
 Success metadata and input hashes are private data, not ordinary operation logs.
+The B5B helper also returns `statements`, an ordered list of byte spans for whole
+outer sublists directly under the program list. More than 512 sublists yields
+`null` and no B5 admission for that source. An older authenticated helper without
+this field still supplies B4 Function evidence. Core checks foreground boundaries
+and applies the closed declaration grammar independently to each admitted span.
 
 An error has only `schema`, `profile`, `status: "error"`, an allowlisted `code`,
 and `definitions: []`. Codes are:

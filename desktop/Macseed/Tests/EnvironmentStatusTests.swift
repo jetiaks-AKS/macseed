@@ -658,8 +658,8 @@ private struct StatusAnchorFrames: PreferenceKey {
         precondition(ids == Set(result.categories.map(\.id)).union(parents))
         precondition(!ids.contains("Standard Setup") && !ids.contains("For Experienced Users"), "Section headers never disclose")
         precondition(Set(CaptureMacOSSettingsGroup.domainIDs).isSubset(of: ids))
-        precondition(EnvironmentComparisonView.toggledCategories([], ids: ids) == ids)
-        precondition(EnvironmentComparisonView.toggledCategories(ids, ids: ids).isEmpty)
+        precondition(CaptureHierarchy.toggled([], ids: ids) == ids)
+        precondition(CaptureHierarchy.toggled(ids, ids: ids).isEmpty)
         var sparse = payload([row(0, "matching")], verdict: "no_differences_detected")
         let ordinary = try presentation(sparse)
         precondition(EnvironmentComparisonView.visibleSections(ordinary).map(\.id) == ["Standard Setup"])
@@ -1444,11 +1444,11 @@ private struct StatusAnchorFrames: PreferenceKey {
 
         let mainIDs = EnvironmentComparisonView.disclosureIDs(macOS)
         let initiallyExpanded = Set<String>()
-        let allExpanded = EnvironmentComparisonView.toggledCategories(initiallyExpanded, ids: mainIDs)
+        let allExpanded = CaptureHierarchy.toggled(initiallyExpanded, ids: mainIDs)
         precondition(allExpanded == mainIDs && allExpanded.contains("macos-dock") && allExpanded.contains("macos-finder"))
-        precondition(EnvironmentComparisonView.toggledCategories(allExpanded, ids: mainIDs).isEmpty)
+        precondition(CaptureHierarchy.toggled(allExpanded, ids: mainIDs).isEmpty)
         let mixedIDs: Set<String> = ["macos-settings", "ssh-configuration"]
-        precondition(EnvironmentComparisonView.toggledCategories(["macos-settings"], ids: mixedIDs) == mixedIDs)
+        precondition(CaptureHierarchy.toggled(["macos-settings"], ids: mixedIDs) == mixedIDs)
 
         precondition(macOSEntry.children[1].items[0].title == "Magnification")
         for width in [1000, 785] {
@@ -1484,8 +1484,8 @@ private struct StatusAnchorFrames: PreferenceKey {
         let presentedIDs = ordered.flatMap(\.entries).flatMap { [$0.id] + $0.children.map(\.id) }
         precondition(Set(presentedIDs).count == presentedIDs.count)
         let workspaceIDs = Set(ordered[1].entries[1].children.map(\.id) + [DeveloperSelectionGroup.workspace.id])
-        precondition(EnvironmentComparisonView.toggledCategories([], ids: workspaceIDs) == workspaceIDs)
-        precondition(EnvironmentComparisonView.toggledCategories(workspaceIDs, ids: workspaceIDs).isEmpty)
+        precondition(CaptureHierarchy.toggled([], ids: workspaceIDs) == workspaceIDs)
+        precondition(CaptureHierarchy.toggled(workspaceIDs, ids: workspaceIDs).isEmpty)
         print("PASS: Excluded filtering, stable SSH correlation, independent diagnostics, macOS aggregation, semantic mixed statuses and trusted App Store labels")
 
 

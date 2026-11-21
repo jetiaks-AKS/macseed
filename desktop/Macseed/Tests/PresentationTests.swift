@@ -1071,7 +1071,7 @@ private struct CaptureRefinementHost: View {
         let grouping = presentation.components(separatedBy: "struct CaptureGroupedContent<")[1].components(separatedBy: "struct CaptureTaskPresentation")[0]
         precondition(grouping.contains("DisclosureGroup(isExpanded: experiencedVisibility)")
             && grouping.contains(".disclosureGroupStyle(HeaderDisclosureStyle())") && !grouping.contains("Toggle("))
-        precondition(grouping.contains("if experiencedVisibility?.wrappedValue != false, let advancedControls"),
+        precondition(grouping.contains("WorkspaceSectionHeader.row(controls: experiencedVisibility?.wrappedValue == false ? nil : advancedControls)"),
             "Experienced Expand All is available only while the container is expanded")
         precondition(grouping.components(separatedBy: "WorkspaceCardSurface()").count - 1 == 2,
                      "Exactly one ordinary and one experienced surface, with no per-sibling card")
@@ -5064,6 +5064,24 @@ private struct CaptureRefinementHost: View {
         let legacy = CoreRestoreInspection(formatVersion: 1, selectedCategories: [], selectedItemCounts: [package.id: 0], secureComponent: false,
             restoreSelection: .init(groups: [.init(id: "Homebrew", domains: [package.id])], inventory: [package]))
         precondition(RestoreSelectionPresentation.includedAreas(legacy).isEmpty, "Explicit zero selected items must not expose legacy inventory")
+        let shellItems = ["shell-alias:", "shell-script:", "shell-variable:"].map { prefix in
+            let id = prefix + String(repeating: "a", count: 64)
+            let item = DisplayItem(id: "shell-zsh:" + id, title: prefix, status: .matching, action: "")
+            return TaskItemPresentation(id: item.id, item: item, state: .matching, sourceDomain: "shell-zsh", sourceItemID: id)
+        }
+        let shell = TaskDomainPresentation(id: "shell-zsh", title: "Shell", symbol: "terminal", items: shellItems)
+        let resultGroups = RestoreExecutionCategories.resultDomains([shell])
+        precondition(resultGroups.map(\.items.count) == [1, 1, 1] && resultGroups.last?.id == DeveloperSelectionGroup.environmentID)
+        precondition(RestorePreviewHierarchy.disclosureIDs([shell], settings: []).contains(DeveloperSelectionGroup.environmentID))
+        let checkGroups = EnvironmentComparisonDomain.shellChildren(.init(id: shell.id, title: shell.title, symbol: shell.symbol, items: shellItems.map(\.item)))
+        precondition(checkGroups.map(\.items.count) == [1, 1, 1] && checkGroups.last?.items.first?.id == shellItems.last?.id)
+        let path = "bin/example"
+        let scriptID = SHA256.hash(data: Data(("shell-script:" + path).utf8)).map { String(format: "%02x", $0) }.joined()
+        let selected = Set(shellItems.compactMap(\.sourceItemID))
+        var script = CoreShellScript(id: scriptID, path: path, aliasIDs: [shellItems[0].sourceItemID!], observationID: scriptID)
+        precondition((try? CoreShellScript.validateCandidates([script], aliases: selected)) != nil)
+        script.aliasIDs = [shellItems[2].sourceItemID!]
+        precondition((try? CoreShellScript.validateCandidates([script], aliases: selected)) == nil)
         precondition(!RestoreAreaSelectionView.hasDisclosure(settings), "No fabricated details for aggregate inspection")
         precondition(TaskRowLayout.statusWidth == 200 && CaptureReviewPresentation.hierarchyStep == 12)
         let checkbox = AnyView(NativeSelectionCheckbox("", isOn: .constant(true), accessibilityTitle: "Master"))
@@ -5603,15 +5621,16 @@ private struct CaptureRefinementHost: View {
                     window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
                     defer { window.close() }
                     for selectAliases in [true, false] {
-                    let keepTitle = selectAliases ? "Aliases & Functions only" : "Keep current selection"
-                    for (title, choice) in [("Cancel", ShellParentConsent.Choice.cancel), (keepTitle, .aliasesOnly), ("Include 2 scripts", .includeScripts)] {
+                    let keepTitle = flow == .capture ? "Continue Without Scripts" : selectAliases ? "Aliases & Functions only" : "Keep current selection"
+                    let includeTitle = flow == .capture ? "Include Scripts" : "Include 2 scripts"
+                    for (title, choice) in [("Cancel", ShellParentConsent.Choice.cancel), (keepTitle, .aliasesOnly), (includeTitle, .includeScripts)] {
                         state.request = ShellParentConsent(aliases: ["fixture-alias"], candidates: scripts, newScripts: scripts, selectAliases: selectAliases)
                         try await Task.sleep(for: .milliseconds(180))
                         guard let sheet = window.attachedSheet, let content = sheet.contentView else {
                             preconditionFailure("Parent script consent must use a native modal sheet")
                         }
                         let actions = buttons(content)
-                        precondition(["Cancel", keepTitle, "Include 2 scripts"].allSatisfy { name in actions.contains { $0.title == name } })
+                        precondition(Set(actions.map(\.title)) == ["Cancel", keepTitle, includeTitle])
                         let message = textFields(content).map(\.stringValue).joined(separator: "\n")
                         for script in scripts { precondition(message.components(separatedBy: URL(fileURLWithPath: script.path).lastPathComponent).count == 2) }
                         precondition(!message.contains(".local/bin/") && message.contains(flow == .capture ? "unencrypted" : "may run later"))
@@ -6006,6 +6025,147 @@ private struct CaptureRefinementHost: View {
         popover?.cancelOperation(nil)
         print("PASS: 8 Match with 6 definitions and 2 Scripts, independent accessible Info button opens native Check scope help")
     }
+    static func shellSkipProtocolChecks() throws {
+        typealias Object = [String: Any]
+        func id(_ kind: String, _ index: Int) -> String {
+            "shell-" + kind + ":" + SHA256.hash(data: Data(String(index).utf8)).map { String(format: "%02x", $0) }.joined()
+        }
+        let aliases = (0..<256).map { id("alias", $0) }
+        let functions = (0..<253).map { id("function", $0) }
+        let environment = ["variable", "path-operation", "initializer"].map { id($0, 0) }
+        let declarations = aliases + functions + environment
+        let files: [Object] = (0..<128).map { index in
+            let path = "bin/file-" + String(index)
+            let digest = SHA256.hash(data: Data(("shell-script:" + path).utf8)).map { String(format: "%02x", $0) }.joined()
+            return ["id": digest, "path": path, "independent": true, "alias_ids": [], "observation_id": digest]
+        }
+        let scripts = files.map { "shell-script:" + ($0["id"] as! String) }
+        func validate(_ skips: [String], typed: Bool = true, selected: [String]? = nil,
+                      extraRows: [[String: String]] = [], planned: Set<String> = [], fileSelection: [String]? = nil) throws {
+            let items = selected ?? Array(Set(skips)).sorted()
+            let selection = CoreRestoreSelection(categories: [], items: ["shell-zsh": items])
+            let catalog = CoreRestoreInspection.Inventory(groups: [.init(id: "Shell", domains: ["shell-zsh"])], inventory: [
+                .init(domain: "shell-zsh", label: "Shell", selectionMode: "items", availability: "available", reason: nil,
+                      items: items.map { .init(itemID: $0, label: "Requirement") })])
+            let rows = Set(items + skips).sorted().map { ["domain": "shell-zsh", "item_id": $0,
+                "action": planned.contains($0) ? "set_setting" : "none", "disposition": planned.contains($0) ? "planned" : "conflict"] }
+            var data: Object = ["selection": ["categories": [], "items": ["shell-zsh": items]], "selected_groups": ["Shell"],
+                "selected_categories": ["shell-zsh"], "selected_item_counts": ["shell-zsh": items.count], "prepared_plan_id": String(repeating: "0", count: 64),
+                "include_secure": false, "secure_restore_status": "not_selected", "shell_skipped_items": skips,
+                "shell_script_candidates": files, "plan": rows + extraRows, "has_planned_changes": !planned.isEmpty,
+                "readiness": ["ready": true, "ready_scope": "environment", "reentry": "restore_prepare", "conditions": []],
+                "warning_count": 0, "error_count": 0]
+            data["shell_script_selection"] = fileSelection
+            let plan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: data))
+            try plan.validate(expected: selection, catalog: catalog, shellStateVersion: typed ? 2 : nil)
+        }
+        try validate(declarations, selected: declarations + scripts, planned: Set(scripts))
+        try validate(aliases + scripts, typed: false, selected: aliases)
+        func rejects(_ body: () throws -> Void) {
+            do { try body(); preconditionFailure("Accepted invalid Shell skips") }
+            catch { precondition(error as? CoreRuntimeError == .malformedEvent) }
+        }
+        rejects { try validate(declarations + [id("function", 300)]) }
+        rejects { try validate(aliases + [id("alias", 300)] + environment) }
+        rejects { try validate(aliases + scripts + [id("alias", 300)], typed: false) }
+        rejects { try validate(environment + [scripts[0]]) }
+        rejects { try validate([functions[0]], typed: false) }
+        rejects { try validate([id("script", 999)], typed: false) }
+        rejects { try validate([scripts[0]], typed: false, selected: aliases, fileSelection: []) }
+        for bad in ["shell-function:bad", functions[0] + "\n", functions[0].uppercased(), id("unknown", 0)] {
+            rejects { try validate(environment + [bad]) }
+        }
+        rejects { try validate(environment + [environment[0]]) }
+        rejects { try validate([functions[0]], selected: environment) }
+        rejects { try validate(environment, planned: [environment[0]]) }
+        rejects { try validate(environment, extraRows: [["domain": "shell-zsh", "item_id": environment[0], "action": "none", "disposition": "blocked"]]) }
+        print("PASS: typed 512 declaration skips with 128 independent Scripts, v5 256 alias/128 file skips, malformed, duplicate, unselected, over-limit and actionable rows rejected")
+    }
+
+    @MainActor static func shellProgressChecks() async throws {
+        let digest = String(repeating: "a", count: 64)
+        let definitions = ["shell-alias:", "shell-function:"].map { $0 + digest }
+        let scripts = ["shell-script:" + digest]
+        let environment = ["shell-variable:", "shell-path-operation:", "shell-initializer:"].map { $0 + digest }
+        let domain = "shell-zsh"
+        let catalog = CoreRestoreInspection.Inventory(groups: [.init(id: "Shell", domains: [domain])],
+            inventory: [.init(domain: domain, label: "Aliases & Functions", selectionMode: "items", availability: "available",
+                reason: nil, items: (definitions + scripts + environment).map { .init(itemID: $0, label: "Fixture") })])
+        func event(_ type: String, _ sequence: Int, _ data: [String: String]) throws -> CoreEvent {
+            try CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1,
+                "operation_id": "fixture", "sequence": sequence, "type": type, "data": data]))
+        }
+        let started = try event("execution_event", 1, ["domain": domain, "item_id": "scope", "state": "started"])
+        let changed = try event("execution_event", 2, ["domain": domain, "item_id": "scope", "state": "changed"])
+        _ = NSApplication.shared
+        let enhanced = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previous = NSApp.accessibilityAttributeValue(enhanced)
+        NSApp.accessibilitySetValue(true, forAttribute: enhanced)
+        defer { NSApp.accessibilitySetValue(previous, forAttribute: enhanced) }
+        let host = NSHostingView(rootView: AnyView(EmptyView()))
+        let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 580, height: 360),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.contentView = nil; window.close() }
+        func elements(_ node: AnyObject, depth: Int = 0) -> [AnyObject] {
+            guard depth < 40 else { return [] }
+            return [node] + (node.accessibilityChildren?() ?? []).flatMap { elements($0 as AnyObject, depth: depth + 1) }
+        }
+        for (ids, title) in [(definitions, "Aliases & Functions"), (scripts, "Scripts"), (definitions + scripts, "Shell"),
+                             (environment, "Variables & PATH"), (definitions + scripts + environment, "Shell")] {
+            let rows = ids.map { ["domain": domain, "item_id": $0, "action": "set_setting", "disposition": "planned"] }
+            let scope = ["domain": domain, "item_id": "scope", "action": "none", "disposition": "information",
+                         "reason": "shell_activation_unknown"]
+            let raw: [String: Any] = ["selection": ["categories": [], "items": [domain: ids]], "prepared_plan_id": digest,
+                "selected_groups": [], "selected_categories": [domain], "selected_item_counts": [domain: ids.count],
+                "include_secure": false, "secure_restore_status": "not_selected", "plan": rows + [scope],
+                "readiness": ["ready": true, "ready_scope": "environment", "conditions": [], "reentry": "restore_prepare"],
+                "has_planned_changes": true, "has_executable_changes": true, "error_count": 0, "warning_count": 0]
+            let plan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: raw))
+            let preview = RestorePreviewPresentation(plan, catalog: catalog)
+            let frozen = RestoreProgressRow.freeze(preview: preview, plan: plan)
+            precondition(frozen.map(\.id) == [domain] && frozen.map(\.title) == [title])
+            precondition(RestoreProgressRow.activity(events: [started], rows: frozen, mutationPossible: true) == title + "…")
+            func progress(_ events: [CoreEvent]) -> RestoreTaskPresentation {
+                RestoreTaskPresentation(preview: preview, plan: plan, events: events, executing: true, operationProgress: true)
+            }
+            let tasks = progress([])
+            precondition(tasks.automaticDomains.map(\.id) == [domain] && tasks.automaticDomains.map(\.executionStatus) == [.waiting])
+            precondition(progress([started]).automaticDomains.map(\.executionStatus) == [.working])
+            precondition(progress([started, changed]).automaticDomains.map(\.executionStatus) == [.awaitingVerification])
+            let predicates = ["shell-alias": "alias_definition", "shell-function": "function_definition", "shell-script": "script_file"]
+            let verified = try ids.enumerated().map { index, id in
+                try event("verification_record", index + 3, ["domain": domain, "item_id": id, "support": "supported",
+                    "conformity": "verified", "predicate": predicates[String(id.prefix { $0 != ":" })] ?? CoreCaptureInventoryRow.Item.environmentPredicate(id)!])
+            }
+            precondition(progress([started, changed] + verified).automaticDomains.map(\.executionStatus) == [.completed])
+            let failed = try event("execution_event", 2, ["domain": domain, "item_id": "scope", "state": "failed"])
+            precondition(frozen[0].project(events: [started, failed]).status == .attention)
+            precondition(progress([started, failed]).automaticDomains.map(\.resultCategoryIssue) == [true])
+            let failure = try event("operation_record", 2, ["domain": domain, "item_id": ids[0],
+                "action": "set_setting", "outcome": "failure"])
+            precondition(progress([failure]).automaticDomains.map(\.executionStatus) == [.attention])
+            let cancelled = try event("cancelled", 2, [:])
+            precondition(RestoreProgressRow.activity(events: [started, cancelled], rows: frozen, mutationPossible: true) == "Rebuilding environment…")
+            host.rootView = AnyView(RestoreRebuildProgressContent(tasks: tasks, activity: "Rebuilding…", stopping: false))
+            try await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded()
+            let nodes = elements(host)
+            let labels = Set(nodes.flatMap { node -> [String] in
+                let selector = NSSelectorFromString("accessibilityValue")
+                let object = node as? NSObject
+                let value = object?.responds(to: selector) == true ? object?.perform(selector)?.takeUnretainedValue() as? String : nil
+                return [node.accessibilityLabel?(), value].compactMap { $0 }
+            })
+            precondition(labels.intersection(["Shell", "Scripts", "Aliases & Functions", "Variables & PATH"]) == [title],
+                "Expected only the selected Shell progress title \(title), got \(labels)")
+            precondition(!nodes.contains { [.button, .disclosureTriangle].contains($0.accessibilityRole?()) })
+            print("PASS: flat shell-zsh Progress, \(ids.count) selected items, \(title)")
+        }
+    }
+
     @MainActor static func shellAliasPresentationChecks() async throws {
         typealias Object = [String: Any]
         func data(_ object: Object) throws -> Data { try JSONSerialization.data(withJSONObject: object) }
@@ -6201,6 +6361,86 @@ private struct CaptureRefinementHost: View {
             precondition(checkedReason.attentionCount == 2 && projected.automaticDomains.count == 1)
             precondition(RestorePreviewMetrics.counts(projected.domains).changes == 0)
             precondition(!checkedReason.categories[0].items[1].action.contains("Install it"))
+            if reason == "shell_tool_observation_prerequisite" {
+                let initializer = "shell-initializer:" + digest
+                compared[1]["item_id"] = initializer
+                reasonCheck["comparison_records"] = compared
+                var owners = records["verification_records"] as! [Object]
+                owners[1]["item_id"] = initializer
+                owners[1]["predicate"] = "initializer_declaration"
+                records["verification_records"] = owners
+                reasonCheck["records"] = records
+                let provider = try presentation(reasonCheck)
+                let item = provider.categories[0].items.first { $0.id == "shell-zsh:" + initializer }
+                precondition(item?.status == .unverified && item?.action == "Macseed could not verify the provider installation.")
+                precondition(provider.attentionCount == checkedReason.attentionCount)
+                // Keep the same failed provider and matching alias. Only the
+                // independent source warning is replaced by activation scope.
+                records["coverage_records"] = [["record_id": "c:scope", "domain": "shell-zsh", "item_id": "scope",
+                    "disposition": "resolved", "source_status": "partial"]]
+                records["diagnostics"] = [["record_id": "v:1", "code": reason, "severity": "error", "phase": "observation"],
+                    ["record_id": "c:scope", "code": "shell_activation_unknown", "severity": "info", "phase": "scope"]]
+                reasonCheck["records"] = records
+                var counts = comparison["counts"] as! [String: Int]
+                counts["unresolved"] = 0
+                comparison["counts"] = counts; comparison["verdict"] = "incomplete"
+                reasonCheck["comparison"] = comparison
+                let mixed = try presentation(reasonCheck)
+                precondition(mixed.categories[0].items.count == 2 && mixed.attentionCount == 1)
+                precondition(mixed.coverageHelp[ShellCommandPresentation.aliasesID]?.contains("exact saved definitions match") == true)
+                precondition(mixed.coverageHelp[DeveloperSelectionGroup.environmentID] == ShellCommandPresentation.activationScope)
+            }
+        }
+        let pathID = "shell-path-operation:" + digest
+        let pathSelection = CoreRestoreSelection(categories: [], items: ["shell-zsh": [ids[0], pathID]])
+        let pathCatalog = CoreRestoreInspection.Inventory(groups: catalog.groups, inventory: [
+            .init(domain: "shell-zsh", label: "Shell", selectionMode: "items", availability: "available", reason: nil,
+                  items: [.init(itemID: ids[0], label: names[0]), .init(itemID: pathID, label: "PATH — Add directories first")])])
+        for satisfied in [false, true] {
+            var fixture = plan
+            fixture["selection"] = ["categories": [], "items": pathSelection.items]
+            fixture["plan"] = [
+                ["domain": "shell-zsh", "item_id": ids[0], "action": "none", "disposition": "satisfied"],
+                ["domain": "shell-zsh", "item_id": pathID, "action": "none", "disposition": satisfied ? "satisfied" : "blocked",
+                 "reason": satisfied ? NSNull() as Any : "shell_dependency_prerequisite"],
+                ["domain": "shell-zsh", "item_id": "scope", "action": "none", "disposition": "information", "reason": "shell_activation_unknown"]
+            ] as [Object]
+            let prepared = try JSONDecoder().decode(CoreRestorePreparation.self, from: data(fixture))
+            try prepared.validate(expected: pathSelection, catalog: pathCatalog)
+            let tasks = RestoreTaskPresentation(preview: .init(prepared, catalog: pathCatalog), plan: prepared)
+            let preview = RestorePreviewContent(title: satisfied ? "Already Matches" : "Needs Attention",
+                state: satisfied ? .matching : .attention, domains: tasks.domains, alreadyMatches: satisfied,
+                previewEvaluated: true, prerequisites: .init(conditions: [], ready: true), areas: [],
+                categoryExpansion: .constant(true), showsActions: false)
+            precondition(preview.allMatchCount == (satisfied ? 2 : nil))
+            let counts = RestorePreviewMetrics.counts(tasks.domains)
+            precondition(counts.matching == (satisfied ? 2 : 1) && counts.attention == (satisfied ? 0 : 1) && counts.changes == 0)
+            if !satisfied {
+                let path = tasks.domains.flatMap(\.previewItems).first { $0.sourceItemID == pathID }
+                precondition(path?.item.action == "A required declaration or its startup order could not be verified.")
+            }
+            let enhanced = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+            let previous = NSApp.accessibilityAttributeValue(enhanced)
+            NSApp.accessibilitySetValue(true, forAttribute: enhanced)
+            defer { NSApp.accessibilitySetValue(previous, forAttribute: enhanced) }
+            func labels(_ node: AnyObject, depth: Int = 0) -> [String] {
+                guard depth < 40 else { return [] }
+                return [node.accessibilityLabel?(), (node as? NSAccessibilityElement)?.accessibilityValue() as? String].compactMap { $0 }
+                    + (node.accessibilityChildren?() ?? []).flatMap { labels($0 as AnyObject, depth: depth + 1) }
+            }
+            for width in (CommandLine.arguments.contains("--no-renders") ? [] : [CGFloat(580), 985]) {
+                let host = NSHostingView(rootView: preview.frame(width: width))
+                let window = NSWindow(contentRect: .init(x: 0, y: 0, width: width, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+                defer { window.contentView = nil; window.close() }
+                try await Task.sleep(for: .milliseconds(100))
+                host.layoutSubtreeIfNeeded()
+                let text = labels(host)
+                precondition(!text.contains { $0.hasPrefix("Aliases & Functions") })
+                precondition(text.contains { $0.hasPrefix("Variables & PATH") } == !satisfied)
+                precondition(text.contains { $0 == "Shell" || $0.hasPrefix("Shell,") } == !satisfied)
+                precondition(text.contains { $0.contains("Everything Already Matches") } == satisfied)
+            }
         }
         // Sanitized representative real-world reasons through production native validators.
         let realNames = ["bootstrap", "c."]
@@ -6378,6 +6618,17 @@ private struct CaptureRefinementHost: View {
         precondition(matchingTasks.domains[0].scopeInformation == ShellCommandPresentation.activationSummary)
         precondition(matchingTasks.domains[0].state == .matching && matchingTasks.automaticAttentionCount == 0)
         precondition(!matchingPrepared.hasBlockedSelectedWork)
+        var blockedDefinitionPlan = matchingPlan, blockedRows = matchingPlan["plan"] as! [Object]
+        blockedRows[0]["disposition"] = "blocked"
+        blockedRows[0]["reason"] = "shell_source_prerequisite"
+        blockedDefinitionPlan["plan"] = blockedRows
+        blockedDefinitionPlan["warning_count"] = 1
+        let mixedPreparation = try JSONDecoder().decode(CoreRestorePreparation.self, from: data(blockedDefinitionPlan))
+        try mixedPreparation.validate(expected: .init(categories: [], items: ["shell-zsh": mixedIDs]), catalog: mixedCatalog)
+        let blockedDefinitionPreview = RestorePreviewPresentation(mixedPreparation, catalog: mixedCatalog)
+        let mixedTasks = RestoreTaskPresentation(preview: blockedDefinitionPreview, plan: mixedPreparation)
+        precondition(mixedTasks.domains[0].scopeInformation == ShellCommandPresentation.activationScope)
+        precondition(RestorePreviewMetrics.counts(mixedTasks.domains).attention == 1)
         for (key, value) in [("domain", "git-configuration"), ("item_id", mixedIDs[0]), ("action", "create"), ("reason", "observation_failed")] {
             var invalid = matchingPlan, rows = matchingPlan["plan"] as! [Object]
             rows[rows.count - 1][key] = value; invalid["plan"] = rows
@@ -7281,13 +7532,39 @@ private struct CaptureRefinementHost: View {
             print(json.dumps(event), flush=True)
         emit('started')
         if request['operation']=='capabilities':
-            emit('result', dict(protocol_version=1, product_version='fixture', operations=['environment_compare'], features={'bundle_comparison': {'version': 1}}))
+            emit('result', dict(protocol_version=1, product_version='fixture', operations=['environment_compare', 'bundle_inspect'], features={'bundle_comparison': {'version': 1}, 'restore_selection': {'version': 1}}))
+        elif request['operation']=='bundle_inspect':
+            domains=['homebrew-packages','shell-zsh']
+            areas=[dict(domain=d,label=d,selection_mode='items',availability='available',items=[dict(item_id='fixture',label='Fixture')]) for d in domains]
+            emit('result', dict(format_version=1,secure_component=False,selected_categories=domains,selected_item_counts={d:1 for d in domains},
+                restore_selection=dict(groups=[dict(id='fixture',domains=domains)],inventory=areas)))
         else:
             assert request['operation']=='environment_compare'
             emit('result',json.loads(pathlib.Path('response.json').read_text()))
         emit('completed',dict(read_only=True))
         """.write(to: root.appendingPathComponent("fixture.py"), atomically: true, encoding: .utf8)
-        try data(payload).write(to: root.appendingPathComponent("response.json"))
+        var mixed = payload
+        let variable = "shell-variable:" + digest("fixture-root")
+        let added = [("shell-zsh", variable, "variable_declaration"), ("homebrew-packages", "standard-fixture", "installed")]
+        var comparisons = mixed["comparison_records"] as! [Object]
+        var evidence = mixed["records"] as! Object
+        var owners = evidence["verification_records"] as! [Object]
+        for (domain, id, predicate) in added {
+            let record: Object = ["record_id": "v:" + id, "domain": domain, "item_id": id]
+            comparisons.append(record.merging(["comparison_kind": "matching", "support": "supported", "phase": "verification"]) { _, new in new })
+            owners.append(record.merging(["predicate": predicate]) { _, new in new })
+        }
+        mixed["comparison_records"] = comparisons
+        evidence["verification_records"] = owners
+        mixed["records"] = evidence
+        var comparison = mixed["comparison"] as! Object, counts = comparison["counts"] as! [String: Int]
+        counts["matching"]! += added.count
+        comparison["counts"] = counts
+        mixed["comparison"] = comparison
+        var reference = mixed["reference_presentation"] as! Object
+        reference["shell_environment_labels"] = [variable: "Variable: FIXTURE_ROOT"]
+        mixed["reference_presentation"] = reference
+        try data(mixed).write(to: root.appendingPathComponent("response.json"))
         let bundle = root.appendingPathComponent("Fixture.mbt"); try Data("fixture".utf8).write(to: bundle)
         let runtime = CoreRuntime(operationLogs: nil)
         let location = CoreLocation(root: root, python: URL(fileURLWithPath: "/usr/bin/python3"), home: root, temporaryBase: root, toolDirectories: [])
@@ -7296,6 +7573,9 @@ private struct CaptureRefinementHost: View {
         precondition(runtime.bundleComparisonSupported == true)
         model.selectBundle(bundle); model.compare(); await model.waitForCompletion()
         precondition(model.state == .result && model.presentation?.attentionCount == 3, "Fixture Check failed: \(String(describing: model.failure))")
+        let selection = RestoreModel(runtime: runtime, location: location)
+        selection.choose(bundle); await selection.waitForCompletion()
+        precondition(selection.state == .review)
         _ = NSApplication.shared
         let enhanced = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
         let previous = NSApp.accessibilityAttributeValue(enhanced)
@@ -7330,9 +7610,78 @@ private struct CaptureRefinementHost: View {
             window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
             defer { window.contentView = nil; window.close() }
             try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
-            guard let expand = elements(host).first(where: { $0.accessibilityRole?() == .button && $0.accessibilityLabel?() == "Expand All" }) else { preconditionFailure("No production Expand All action") }
-            precondition(expand.accessibilityPerformPress?() == true)
-            try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
+            func button(_ title: String) -> AnyObject? {
+                elements(host).first { $0.accessibilityRole?() == .button && $0.accessibilityLabel?() == title }
+            }
+            func press(_ element: AnyObject?) async throws {
+                precondition(element?.accessibilityPerformPress?() == true)
+                try await Task.sleep(for: .milliseconds(100)); host.layoutSubtreeIfNeeded()
+            }
+            let standard = " Standard Setup", local = " For Experienced Users"
+            func frame(_ label: String, in view: NSView) -> NSRect {
+                let node = elements(view).first { node in
+                    if node.accessibilityLabel?() == label { return true }
+                    guard let object = node as? NSObject else { return false }
+                    let selector = NSSelectorFromString("accessibilityValue")
+                    return object.responds(to: selector) && object.perform(selector)?.takeUnretainedValue() as? String == label
+                }
+                return node?.accessibilityFrame?() ?? .zero
+            }
+            func scrollViews(_ view: NSView) -> [NSScrollView] {
+                (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews)
+            }
+            let scroll = scrollViews(host).first!
+            let viewport = scroll.accessibilityFrame()
+            let headingFrame = frame("Details by Category", in: host)
+            precondition(!headingFrame.isEmpty && headingFrame.minY >= viewport.maxY - 1)
+            let actions = elements(host).filter { $0.accessibilityRole?() == .button && $0.accessibilityLabel?()?.hasPrefix("Expand All") == true }
+            precondition(actions.count == 2)
+            let standardFrame = frame("Expand All" + standard, in: host)
+            // Render the real Selection view from a read-only inspection fixture.
+            let reference = NSHostingView(rootView: WorkflowContentViewport(pinned: true) {
+                RestoreView(model: selection, runtime: runtime).padding(28)
+            }.frame(width: CGFloat(width), height: 900).background(Color(nsColor: .windowBackgroundColor))
+                .environment(\.colorScheme, dark ? .dark : .light))
+            let referenceWindow = NSWindow(contentRect: host.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+            referenceWindow.isReleasedWhenClosed = false; referenceWindow.contentView = reference; referenceWindow.orderFront(nil)
+            defer { referenceWindow.contentView = nil; referenceWindow.close() }
+            try await Task.sleep(for: .milliseconds(100)); reference.layoutSubtreeIfNeeded()
+            for section in ["Standard Setup", "For Experienced Users"] {
+                let heading = frame(section, in: host), action = frame("Expand All " + section, in: host)
+                let referenceHeading = frame(section, in: reference), referenceAction = frame("Expand All " + section, in: reference)
+                precondition(!heading.isEmpty && !action.isEmpty && !referenceHeading.isEmpty && !referenceAction.isEmpty)
+                precondition(viewport.contains(NSPoint(x: action.midX, y: action.midY)) && action.minX > heading.minX)
+                precondition(abs((heading.midY - action.midY) - (referenceHeading.midY - referenceAction.midY)) <= 1
+                    && abs((action.maxX - heading.minX) - (referenceAction.maxX - referenceHeading.minX)) <= 1
+                    && abs(action.width - referenceAction.width) <= 1,
+                    "Header geometry differs from Selection: \(section), \(heading), \(action), \(referenceHeading), \(referenceAction)")
+            }
+            if let output = ProcessInfo.processInfo.environment["MACSEED_UI_ARTIFACTS"] {
+                for (name, surface) in [("CheckHeaders", host as NSView), ("SelectionHeaders", reference as NSView)] {
+                    let bitmap = surface.bitmapImageRepForCachingDisplay(in: surface.bounds)!
+                    surface.cacheDisplay(in: surface.bounds, to: bitmap)
+                    try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: output)
+                        .appendingPathComponent("\(name)-\(width)-\(dark ? "dark" : "light").png"))
+                }
+            }
+            try await press(button("Expand All" + local))
+            precondition(labels(host).contains("fixture.sh") && labels(host).contains("Variable: FIXTURE_ROOT") && labels(host).contains("Variables & PATH") && !labels(host).contains("standard-fixture"))
+            precondition(button("Expand All" + standard) != nil && button("Collapse All" + local) != nil)
+            try await press(button("Expand All" + standard))
+            precondition(labels(host).contains("standard-fixture") && button("Collapse All" + standard) != nil)
+            let top = scroll.contentView.bounds.origin
+            let distance = min(75, scroll.documentView!.frame.height - scroll.contentView.bounds.height)
+            precondition(distance > standardFrame.height)
+            scroll.contentView.scroll(to: .init(x: top.x, y: top.y + distance))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            try await Task.sleep(for: .milliseconds(80)); host.layoutSubtreeIfNeeded()
+            precondition(abs(frame("Details by Category", in: host).minY - headingFrame.minY) < 2)
+            if let moved = button("Collapse All" + standard)?.accessibilityFrame?(), !moved.isEmpty {
+                precondition(moved.minY > viewport.maxY || abs(moved.midY - standardFrame.midY) >= distance - 3,
+                             "Standard header control follows the scroll offset: \(standardFrame), \(moved)")
+            }
+            scroll.contentView.scroll(to: top); scroll.reflectScrolledClipView(scroll.contentView)
+            try await Task.sleep(for: .milliseconds(80)); host.layoutSubtreeIfNeeded()
             let text = labels(host)
             for (title, attention) in [("Shell", false), ("Custom Commands", false), ("Aliases & Functions", true)] {
                 guard let header = elements(host).first(where: { $0.accessibilityRole?() == .disclosureTriangle
@@ -7347,15 +7696,33 @@ private struct CaptureRefinementHost: View {
                 try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: output).appendingPathComponent("Check-\(width)-\(dark ? "dark" : "light").png"))
             }
             for title in ["Shell", "Custom Commands", "Aliases & Functions", "Scripts", "fixture.sh", "Shell coverage", "unverified requirements"] { precondition(text.contains(title), "Missing native Check content: " + title + " in " + text) }
-            guard let collapse = elements(host).first(where: { $0.accessibilityRole?() == .button && $0.accessibilityLabel?() == "Collapse All" }) else { preconditionFailure("No Collapse All") }
-            precondition(collapse.accessibilityPerformPress?() == true)
-            try await Task.sleep(for: .milliseconds(80)); host.layoutSubtreeIfNeeded()
-            precondition(!labels(host).contains("fixture.sh"))
+            let scriptsDisclosure = elements(host).first { $0.accessibilityRole?() == .disclosureTriangle && $0.accessibilityLabel?()?.hasPrefix("Scripts,") == true }
+            try await press(scriptsDisclosure)
+            precondition(!labels(host).contains("fixture.sh") && button("Collapse All" + standard) != nil && button("Expand All" + local) != nil)
+            try await press(button("Expand All" + local))
+            precondition(labels(host).contains("fixture.sh") && button("Collapse All" + standard) != nil)
+            try await press(button("Collapse All" + local))
+            precondition(labels(host).contains("standard-fixture") && !labels(host).contains("fixture.sh") && button("Collapse All" + standard) != nil)
+            try await press(button("Expand All" + local))
+            try await press(button("Collapse All" + standard))
+            precondition(labels(host).contains("fixture.sh") && button("Collapse All" + local) != nil && button("Expand All" + standard) != nil)
+            try await press(button("Collapse All" + local))
+            precondition(!labels(host).contains("fixture.sh") && !labels(host).contains("standard-fixture"))
             let collapsedShell = elements(host).first { $0.accessibilityRole?() == .disclosureTriangle
                 && $0.accessibilityLabel?()?.hasPrefix("Shell,") == true }!
             precondition((collapsedShell.accessibilityLabel?() ?? "").components(separatedBy: "Needs Attention").count - 1 == 2,
                 "Collapsed Shell retains its aggregate status and count badge")
+            try await press(button("Expand All" + local))
+            let before = model.operationID
+            let changedScope = dark && width == 985
+            if changedScope { try data(payload).write(to: root.appendingPathComponent("response.json")) }
+            model.compare(); await model.waitForCompletion()
+            try await Task.sleep(for: .milliseconds(100)); host.layoutSubtreeIfNeeded()
+            precondition(model.state == .result && model.operationID != before && (button("Expand All" + standard) != nil) == !changedScope
+                && button("Expand All" + local) != nil && !labels(host).contains("fixture.sh"))
+            precondition(labels(host).contains("Standard Setup") == !changedScope)
         } }
+        print("PASS: scoped Check controls, individual and partial disclosure, fixed title and two inline scrolling section actions, refreshed defaults")
         print("PASS: production Check workflow with fixture protocol records, distinct aliases/scripts, four file statuses, exact attention breakdown, generic coverage and independent diagnostics; Expand/Collapse All at 580/985 pt Light/Dark")
     }
 
@@ -7694,6 +8061,8 @@ private struct CaptureRefinementHost: View {
     @MainActor static func main() async {
         setbuf(stdout, nil)
         print("CHECK: PresentationTests entry")
+        if CommandLine.arguments.contains("--shell-skips-only") { try! shellSkipProtocolChecks(); return }
+        if CommandLine.arguments.contains("--shell-progress-only") { try! await shellProgressChecks(); return }
         developerIconChecks()
         if CommandLine.arguments.contains("--capture-result-actions-only") { captureResultActionsChecks(); try! await cleanShellCaptureResultChecks(); return }
         if CommandLine.arguments.contains("--result-stabilization-only") { try! await rebuildResultStabilizationChecks(); return }
@@ -7888,6 +8257,8 @@ private struct CaptureRefinementHost: View {
         try! captureDisclosureChecks()
         try! sshResolutionPresentationChecks()
         try! sshHostPresentationChecks()
+        try! shellSkipProtocolChecks()
+        try! await shellProgressChecks()
         try! await shellAliasPresentationChecks()
         let finalItem = TaskItemPresentation(id: "result-item", item: DisplayItem(id: "result-item", title: "Example", status: .information, action: "Confirmed outcome"), state: .completed, resultLabels: ["Applied", "Verified"])
         for state in [TaskRowState.completed, .attention, .failed, .unverified, .notRun] {
@@ -8013,7 +8384,7 @@ private struct CaptureRefinementHost: View {
         precondition(statusView.contains("panel.canChooseDirectories = false") && statusView.contains("UTType(filenameExtension: \"mbt\")"))
         precondition(statusView.contains("model.selectBundle(url)"))
         precondition(statusView.contains("EnvironmentComparisonDomain(category: child, technicalFacts: technicalFacts,"))
-        precondition(statusView.contains("DisclosureGroup(isExpanded: expansion ?? $expanded)"))
+        precondition(statusView.contains("let disclosure = expansion ?? $expanded") && statusView.contains("DisclosureGroup(isExpanded: disclosure)"))
         precondition(statusView.contains("@ReferenceViewState<Bool> private var expanded = false"))
         precondition(statusView.contains("if model.state != .choose && horizontal { Spacer() }"))
         precondition(statusView.contains("if model.reference != nil {"))
@@ -8323,7 +8694,8 @@ private struct CaptureRefinementHost: View {
         print("PASS: Shared neutral material sidebar/header in production and preview; native Appearance setting")
         let categoryStart = content.range(of: "struct CategoryRow: View")!
         precondition(content[categoryStart.lowerBound...].contains("@ViewState<Bool> private var expanded = false"))
-        precondition(statusView.contains("ForEach(Self.visibleSections(result)) { section in") && statusView.contains("EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: result.technicalFacts, counts: Dictionary("))
+        precondition(statusView.contains("let sections = Self.visibleSections(result)") && statusView.contains("ForEach(sections) { section in"))
+        precondition(statusView.contains("EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: result.technicalFacts"))
         let referenceRuntime = CoreRuntime()
         let referenceModel = EnvironmentStatusModel(runtime: referenceRuntime)
         let directory = URL(fileURLWithPath: "/private/tmp/presentation-saved-environment")

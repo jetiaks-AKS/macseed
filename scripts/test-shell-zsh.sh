@@ -149,7 +149,14 @@ assert "URL credentials absent from messages" bash -c '[[ "$1" != *redacted* ]]'
 check "authenticated URL artifact validates" 0 zsh_snapshot_validate
 assert "authenticated URL has stable reason" assert_reason sensitive-content
 
-printf '# TOKEN = documented here\n' > "$HOME/.zshrc"
+for private_source in 'COLOR=ghp_1234567890abcdef' 'MY_SETTING="custom value"' 'typeset -A labels=(work private)' 'export NORMAL="${API_KEY:-fallback}"' '# TOKEN = documented here'; do
+    printf '%s\n' "$private_source" > "$HOME/.zshrc"
+    check "unreviewed plaintext excluded before whole-file publication" 1 discover_zsh
+    assert "private whole-file bytes absent" assert_status excluded
+    assert "restricted declaration excluded" assert_reason sensitive-content
+done
+
+printf '# Local shell preferences\n' > "$HOME/.zshrc"
 check "benign comment remains eligible" 0 discover_zsh
 check "benign comment artifact validates" 0 zsh_snapshot_validate
 assert "benign comment eligible status" assert_status eligible

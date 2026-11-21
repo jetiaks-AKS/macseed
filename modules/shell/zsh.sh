@@ -52,7 +52,7 @@ zsh_snapshot_validate() {
     total="${total//[[:space:]]/}"
     [[ "$total" =~ ^[0-9]+$ && $total -le 1048576 ]] || return 2
 
-    if [[ "$(head -n 1 "$file")" == MBT-SHELL-STATE-1 ]]; then
+    if [[ "$(head -n 1 "$file")" == MBT-SHELL-STATE-[12] ]]; then
         ZSH_SNAPSHOT_FORMAT=functions
         zsh_selected_state validate "$file" || return 2
         ZSH_SNAPSHOT_STATUS=eligible
@@ -181,7 +181,7 @@ zsh_snapshot_hazard() {
 
 discover_zsh() {
     local source_file="$HOME/.zshrc" captured="" size stripped before after reason
-    local result=0 hazard_result
+    local result=0 hazard_result privacy_result
     action "Inspecting Zsh configuration..."
     if ! zsh_home_valid; then
         error "Failed to inspect Zsh HOME"
@@ -231,7 +231,18 @@ discover_zsh() {
             hazard_result=$?
             case "$hazard_result" in
                 0) reason="$ZSH_EXCLUSION_REASON" ;;
-                1) reason=eligible ;;
+                1)
+                    if python3 -B "${ZSH_ALIASES_HELPER%/*}/environment.py" "$captured"; then
+                        reason=eligible
+                    else
+                        privacy_result=$?
+                        if [[ $privacy_result -ne 1 ]]; then
+                            rm -f "$captured"
+                            error "Failed to inspect Shell declaration privacy"
+                            return 2
+                        fi
+                        reason=sensitive-content
+                    fi ;;
                 *) rm -f "$captured"; error "Failed to inspect Zsh configuration"; return 2 ;;
             esac
         fi
@@ -376,7 +387,7 @@ bootstrap_zsh() {
         fi
         [[ "$alias_result" == changed || "$alias_result" == matching ]] || return 2
         if [[ "$ZSH_SNAPSHOT_FORMAT" == functions ]]; then
-            success "Selected Zsh Function definition bytes match; runtime activation remains unknown"
+            success "Selected Zsh declarations match their qualified sources"
         else
             success "Selected Zsh alias declarations match"
         fi
@@ -472,11 +483,13 @@ zsh_alias_preview() {
     while IFS=$'\t' read -r identity state policy; do
         case "$state:$policy" in
             matching:*) preview_record shell-zsh "$identity" none satisfied ;;
+            pending:dependency) preview_record shell-zsh "$identity" set_setting planned
+                preview_action "Would restore the preceding Shell dependency" ;;
             missing:create) preview_record shell-zsh "$identity" create planned; preview_action "Would restore selected Shell state" ;;
             missing:add)
                 preview_record shell-zsh "$identity" set_setting planned
                 if [[ "$ZSH_SNAPSHOT_FORMAT" == functions ]]; then
-                    preview_action "Would add an exact Zsh Function definition to its qualified source"
+                    preview_action "Would add the selected Zsh declaration to its qualified source"
                 else
                     preview_action "Would add a selected Zsh alias to its qualified source"
                 fi ;;
@@ -530,7 +543,13 @@ zsh_alias_verify() {
             *) verification_input_error shell-zsh; return 0 ;;
         esac
         verification_coverage shell-zsh "$identity" resolved observed_present
-        if [[ "$identity" == shell-script:* ]]; then
+        if [[ "$identity" == shell-variable:* ]]; then
+            verification_result shell-zsh "$identity" variable_declaration "$result" "$code" "$kind"
+        elif [[ "$identity" == shell-path-operation:* ]]; then
+            verification_result shell-zsh "$identity" path_operation "$result" "$code" "$kind"
+        elif [[ "$identity" == shell-initializer:* ]]; then
+            verification_result shell-zsh "$identity" initializer_declaration "$result" "$code" "$kind"
+        elif [[ "$identity" == shell-script:* ]]; then
             verification_result shell-zsh "$identity" script_file "$result" "$code" "$kind"
         elif [[ "$identity" == shell-alias:* && "$ZSH_SNAPSHOT_FORMAT" == functions ]]; then
             verification_result shell-zsh "$identity" alias_definition "$result" "$code" "$kind"

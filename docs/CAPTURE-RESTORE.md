@@ -87,9 +87,9 @@ File transfer never establishes safe execution or internal dependency availabili
 Sensitive-content indicators block transfer, but absence of an indicator does not
 prove a secret-free file; normal Bundle contents remain unencrypted.
 
-Capture counts Aliases & Functions and Scripts independently as functional domains
+Capture counts Aliases & Functions, Scripts and Variables & PATH independently as functional domains
 in Selection, Confirmation and Result, while retaining one physical Shell Core
-module. Each selected alias, function and unique script counts once; manual
+module. Each selected declaration and unique script counts once; manual
 and alias-linked discovery of the same file is deduplicated. Check emits file-level
 bytes/mode evidence separately from definition matches.
 Scripts transfers explicitly selected files, not directories. It is not a script
@@ -106,8 +106,9 @@ supports mixed typed Capture/Restore/Verify/Check with explicit Native selection
 independent Scripts consent. The [real-Mac B4 acceptance](qualification/SHELL-UNIFIED-B4-2026-11-17.md#real-mac-gui-acceptance-2026-11-18)
 restored all eight selected requirements, verified the commands and Script files,
 and converged on a no-op Rebuild. Automated Check leaves runtime activation unverified.
-**Variables & PATH** is next, followed by broader **Settings** and conditional
-**Plugins & Themes**. Apart from the Scripts entry needed to add files, no empty
+[Variables & PATH](qualification/SHELL-VARIABLES-PATH-2026-11-20.md#controlled-real-mac-acceptance)
+passed controlled mixed real-Mac acceptance. Broader **Settings** and conditional
+**Plugins & Themes** remain open. Apart from the Scripts entry needed to add files, no empty
 future categories, source browser or background monitoring is introduced. The
 [Shell contract](toolkit/CONFIGURATION.md#shell--zsh-configuration) owns exact safety
 and compatibility limits. Functional fixtures do not qualify effective interactive

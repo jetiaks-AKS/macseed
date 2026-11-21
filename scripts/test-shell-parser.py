@@ -52,6 +52,176 @@ def launch_enforced(test, client, requirement):
 
 class ShellStateTests(unittest.TestCase):
     """Pure codec tests share the Shell harness; no helper build or HOME access."""
+    def test_environment_words_paths_providers_and_privacy(self):
+        env = state.environment
+        def intent(text):
+            return env.classify(text)[2]
+        self.assertEqual(intent("export PATH=':/a::/a:'")['path']['components'],
+                         [[], [['literal', '/a']], [], [['literal', '/a']], []])
+        self.assertEqual(intent('path=("$HOME/bin" $path)')['path']['action'], 'prefix')
+        self.assertEqual(intent('path=(/a "$path")')['path']['action'], 'assign-expression')
+        self.assertEqual(intent('typeset -U PATH path')['interfaces'], ['PATH', 'path'])
+        unique_reset = dict(kind='path-operation', key='path', details=dict(intent=intent('typeset -U path=(/bin)')))
+        detail = env.presentation(unique_reset, {'interactive', 'interactive-login'}, '.zshrc')
+        self.assertIn('Replace', detail['label'])
+        self.assertIn('first occurrence', detail['explanation'])
+        self.assertEqual(env.parameter_uses('path', intent('path+=(/bin)')), ({'PATH', 'path'}, {'PATH', 'path'}))
+        self.assertEqual(env.parameter_uses('PACKAGES', intent('PACKAGES+=(test)')), ({'PACKAGES'}, {'PACKAGES'}))
+        self.assertEqual(intent('export NAME')['operator'], None)
+        self.assertEqual(intent('NAME=""')['words'], [[]])
+        self.assertEqual(intent('P=~/bin')['words'][0][0], ['home', 'HOME'])
+        for source in ['V="$WORDS[2]"', 'V="$ROOT:h"', 'V=$ROOT:t']:
+            with self.subTest(source=source), self.assertRaisesRegex(env.Excluded, 'dynamic_expression'):
+                env.classify(source)
+        self.assertEqual(intent('V="${ROOT}:h"')['words'][0][-1], ['literal', ':h'])
+        self.assertEqual(intent('typeset -gx NOTE="café two words"')['words'], [[['literal', 'café two words']]])
+        for provider, source in [('Homebrew', 'eval "$(/custom/brew/bin/brew shellenv zsh)"'),
+                                 ('nvm', '[[ -s "$NVM_DIR/nvm.sh" ]] && . "$NVM_DIR/nvm.sh"'),
+                                 ('mise', 'eval "$(mise activate zsh)"'), ('direnv', 'eval "$(direnv hook zsh)"'),
+                                 ('asdf', 'source "$HOME/.asdf/asdf.sh"'), ('Cargo', '. "$HOME/.cargo/env"'),
+                                 ('pyenv', 'eval "$(pyenv init - zsh)"'), ('fnm', 'eval "$(fnm env --shell zsh)"')]:
+            self.assertEqual(env.classify(source)[:2], ('initializer', provider))
+        for source in ['DATA="${PASSWORD:-x}"', 'COLOR=ghp_sensitive12345', "X='gh''p_sensitive12345'",
+                       'typeset -A map=(ghp_sensitive12345 value)', 'A="line one\n-----BEGIN PRIVATE KEY-----"',
+                       'DATA="redis://alice:hunter2@host"', 'GROUP=$(external)', 'I="${X:=default}"']:
+            with self.subTest(source=source), self.assertRaises(env.Excluded):
+                intent(source)
+
+    def test_environment_documented_variants(self):
+        env = state.environment
+        for provider, variant in [('Homebrew', '/opt/homebrew/bin/brew shellenv'), ('pyenv', 'pyenv init --path'),
+                                  ('mise', '~/.local/bin/mise activate zsh')]:
+            self.assertEqual(env.classify('eval "$(' + variant + ')"')[:2], ('initializer', provider))
+        for suffix in ('', ' --no-use'):
+            kind, name, ir = env.classify(r'[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' + suffix)
+            self.assertEqual((kind, name, ir['guard'], ir['variant']), ('initializer', 'nvm', 'nonempty-nvm-script', '"$NVM_DIR/nvm.sh"' + suffix))
+        self.assertEqual(env.parameter_uses('NVM_DIR', env.classify(env.NVM_DIRECTORY)[2])[1], {'HOME', 'XDG_CONFIG_HOME'})
+        for op in ('-', ':-'):
+            ir = env.classify('export PATH="${ASDF_DATA_DIR' + op + '$HOME/.asdf}/shims:$PATH"')[2]
+            self.assertEqual(ir['words'][0][0], ['home-default', 'ASDF_DATA_DIR', op, '/.asdf'])
+        self.assertEqual(env.classify('[[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"')[2]['guard'], 'pyenv-bin-directory')
+        self.assertEqual(env.classify('eval "$("${HOME}/.local/bin/mise" activate zsh --shims)"')[2]['variant'],
+                         '~/.local/bin/mise activate zsh --shims')
+        self.assertEqual(env.classify('eval "$(pyenv init --path --no-rehash)"')[1], 'pyenv')
+        for text in [env.NVM_DIRECTORY.replace('printf', 'other'), 'V="${D:-$(run)}"', r'[ -s "$OTHER" ] && \. "$NVM_DIR/nvm.sh"']:
+            with self.assertRaises(env.Excluded):
+                env.classify(text)
+
+    def test_target_provider_installation_evidence(self):
+        providers = functions.providers
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work).resolve()
+            prefix = root / 'brew'
+            evidence = {}
+            def install(relative, data, mode=0o600):
+                path = prefix / relative
+                path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                path.write_bytes(data); path.chmod(mode)
+                return path
+            files = [install('bin/brew', b'#!/bin/bash\n# reviewed launcher', 0o700),
+                     install('Library/Homebrew/brew.sh', b'reviewed dispatch'),
+                     install('Library/Homebrew/cmd/shellenv.sh', b'reviewed shellenv')]
+            release = tuple(hashlib.sha256(path.read_bytes()).hexdigest() for path in files)
+            os_helper = install('Library/Homebrew/utils/os.sh', b'# reviewed os helper')
+            helpers = (('utils/os.sh', hashlib.sha256(os_helper.read_bytes()).hexdigest()),)
+            # The fixture supplies the independent target prefix and release pin.
+            # All checks inside that installation use real files and permissions.
+            stamp = providers._stamp
+            signed_fixture = Path('/usr/bin/true').read_bytes()
+            binaries = {(name, platform.machine()): {hashlib.sha256(signed_fixture).hexdigest()}
+                        for name in ('mise', 'fnm', 'direnv')}
+            def owned(path, evidence, **options):
+                if path in root.parents:
+                    return path.lstat()
+                return stamp(path, evidence, **options)
+            with patch.object(providers, '_prefixes', return_value=[prefix]), patch.object(providers, '_stamp', owned), \
+                    patch.object(providers, 'BREW_RELEASES', {release: (helpers, True)}), patch.object(providers, 'FORMULA_BINARIES', binaries):
+                self.assertEqual(providers.executable(dict(variant='brew shellenv'), evidence), str(files[0]) + ' shellenv zsh')
+                self.assertIn('/usr/bin/id', evidence)
+                self.assertEqual(evidence[str(os_helper)][-1], helpers[0][1])
+                def writable_system_directory(path, evidence, **options):
+                    info = owned(path, evidence, **options)
+                    if path == Path('/usr/bin'):
+                        return os.stat_result((info.st_mode | 0o020, *info[1:]))
+                    return info
+                with patch.object(providers, '_stamp', writable_system_directory):
+                    with self.assertRaises(providers.Unqualified):
+                        providers.executable(dict(variant='brew shellenv'), {})
+                with patch.object(providers.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)) as signature:
+                    with self.assertRaises(providers.Unqualified):
+                        providers.executable(dict(variant='brew shellenv'), {})
+                    self.assertIn('=anchor apple and identifier "com.apple.id"', signature.call_args.args[0])
+                os_helper.write_bytes(b'# changed helper')
+                with self.assertRaises(providers.Unqualified):
+                    providers.executable(dict(variant='brew shellenv'), {})
+                os_helper.unlink()
+                os_helper.symlink_to(files[1])
+                with self.assertRaises(providers.Unqualified):
+                    providers.executable(dict(variant='brew shellenv'), {})
+                os_helper.unlink()
+                install('Library/Homebrew/utils/os.sh', b'# reviewed os helper')
+                fresh = {}
+                providers.executable(dict(variant='brew shellenv'), fresh)
+                self.assertNotEqual(fresh[str(os_helper)], evidence[str(os_helper)])
+                original = files[0].read_bytes()
+                files[0].write_bytes(b'unreviewed')
+                with self.assertRaises(providers.Unqualified):
+                    providers.executable(dict(variant='brew shellenv'), {})
+                files[0].write_bytes(original)
+                arch = platform.machine()
+                for name, args in [('mise', 'activate zsh'), ('pyenv', 'init --path'), ('fnm', 'env --shell zsh'), ('direnv', 'hook zsh')]:
+                    # A signed native image exercises the platform verifier. It is never run.
+                    tool_dir = '/1/libexec/' if name == 'pyenv' else '/1/bin/'
+                    real = install('Cellar/' + name + tool_dir + name, signed_fixture, 0o700)
+                    receipt = install('Cellar/' + name + '/1/INSTALL_RECEIPT.json', json.dumps(dict(source=dict(tap='homebrew/core'),
+                        poured_from_bottle=True, arch=arch)).encode())
+                    link = prefix / 'bin' / name
+                    link.symlink_to(real)
+                    if name == 'pyenv':
+                        real.write_bytes(b'#!/usr/bin/env bash\n# inert fixture\n')
+                        with self.assertRaises(providers.Unqualified):
+                            providers.executable(dict(variant=name + ' ' + args), {})
+                        completion = install('Cellar/pyenv/1/completions/pyenv.zsh', b'# fixture')
+                        digest = hashlib.sha256(real.read_bytes()).hexdigest()
+                        manifest = hashlib.sha256(('pyenv ' + digest + '\n').encode()).hexdigest()
+                        with patch.multiple(providers, PYENV_LIBEXEC=manifest, PYENV_REHASH=hashlib.sha256(b'').hexdigest(),
+                                            PYENV_COMPLETION=hashlib.sha256(completion.read_bytes()).hexdigest()):
+                            self.assertEqual(providers.executable(dict(variant=name + ' ' + args), {}), str(link) + ' ' + args)
+                            hook = root / '.pyenv/pyenv.d/rehash/custom.bash'
+                            hook.parent.mkdir(parents=True); hook.write_bytes(b'# custom')
+                            with self.assertRaises(providers.Unqualified):
+                                providers.executable(dict(variant=name + ' ' + args), {}, root)
+                    else:
+                        self.assertEqual(providers.executable(dict(variant=name + ' ' + args), {}), str(link) + ' ' + args)
+                        real.write_bytes(Path('/usr/bin/false').read_bytes())
+                        with self.assertRaises(providers.Unqualified):
+                            providers.executable(dict(variant=name + ' ' + args), {})
+                        real.write_bytes(signed_fixture)
+                    if name == 'mise':
+                        local = root / '.local/bin/mise'
+                        local.parent.mkdir(parents=True)
+                        local.symlink_to(link)
+                        request = dict(variant='$HOME/.local/bin/mise activate zsh')
+                        self.assertEqual(providers.executable(request, {}, root), request['variant'])
+                        local.unlink()
+                        local.symlink_to(real)
+                        with self.assertRaises(providers.Unqualified):
+                            providers.executable(request, {}, root)
+                        local.unlink()
+                        local.write_bytes(signed_fixture)
+                        local.chmod(0o700)
+                        with self.assertRaises(providers.Unqualified):
+                            providers.executable(request, {}, root)
+                        with patch.object(providers, 'MISE_RELEASES', {arch: {hashlib.sha256(local.read_bytes()).hexdigest()}}):
+                            self.assertEqual(providers.executable(request, {}, root), request['variant'])
+                            with self.assertRaises(providers.Unqualified):
+                                providers.executable(dict(variant='mise activate zsh'), {}, root)
+                    receipt.write_text('{}')
+                    with self.assertRaises(providers.Unqualified):
+                        providers.executable(dict(variant=name + ' ' + args), {})
+                with self.assertRaises(providers.Unqualified):
+                    providers.executable(dict(variant='/elsewhere/bin/brew shellenv'), {})
+
     def test_typed_alias_literal_boundary_and_legacy_compatibility(self):
         base = state.legacy().base
         for body in (r'printf "one\ntwo\n" | grep -F two', 'a && b || c; d > out 2>&1',
@@ -79,17 +249,17 @@ class ShellStateTests(unittest.TestCase):
         with self.assertRaises(state.Invalid):
             state.assemble(*self.fixture(alias_value='true && source "$HOME/Scripts/task.sh"'))
 
-    def test_activation_scope_is_informational_only_for_all_matching_selected_rows(self):
-        for statuses in [[], ['matching'], ['matching', 'matching'],
-                         ['matching', 'differing'], ['matching', 'unverified'], ['missing']]:
+    def test_shell_scope_projects_independent_observation_evidence(self):
+        for coverage, scope_reason in [('information', 'activation_unknown'), ('partial', 'source_prerequisite')]:
             for command in ('inspect', 'compare'):
-                with self.subTest(statuses=statuses, command=command), patch.object(functions, 'load'), \
+                with self.subTest(coverage=coverage, command=command), patch.object(functions, 'load'), \
                         patch.object(functions, 'plan') as plan, patch.object(functions.sys, 'argv', ['functions', command, 'fixture']), \
                         patch('builtins.print') as output:
-                    plan.return_value.rows = [({'id': str(i)}, status, 'fixture') for i, status in enumerate(statuses)]
+                    plan.return_value.rows = [({'id': 'item'}, 'unverified', 'tool_observation_prerequisite')]
+                    plan.return_value.coverage = coverage
                     self.assertEqual(functions.main(), 0)
-                    expected = 'information' if statuses and all(s == 'matching' for s in statuses) else 'partial'
-                    output.assert_called_with('scope', expected, 'activation_unknown', sep='\t')
+                    output.assert_any_call('item', 'unverified', 'tool_observation_prerequisite', sep='\t')
+                    output.assert_called_with('scope', coverage, scope_reason, sep='\t')
 
     def load(self, source, order=0, parent=None, context='interactive', site=None):
         row = dict(source=source['id'], parent=parent, order=order, context=context,
@@ -522,6 +692,673 @@ class ShellStateTests(unittest.TestCase):
 
 
 class ShellParser(unittest.TestCase):
+    def test_pyenv_future_rehash_lookup(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        source, target = self.observation_home(), self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        def status(raw):
+            self.source_file(source, '.zshrc', raw)
+            value = functions.observe.observe(str(source), helper, aliases=True, independent=True, environment=True).snapshot
+            return {row['key']: s for row, s, _ in functions.plan(value, str(target), helper=helper).rows}
+        def installation(intent, evidence, home):
+            return '/usr/bin/pyenv ' + intent['variant'].split(' ', 1)[1]
+        with patch.object(functions.providers, 'executable', installation):
+            init = b'eval "$(pyenv init - zsh)"\n'
+            self.assertEqual(status(init), {'pyenv': 'unverified'})
+            self.assertEqual(status(b'eval "$(pyenv init --path --no-rehash)"\n'), {'pyenv': 'missing'})
+            prefix = b'export PATH="/usr/bin:$PATH"\n'
+            self.assertEqual(status(prefix + init)['pyenv'], 'unverified')
+            reset = b'export PATH="/usr/bin:/bin"\n'
+            self.assertEqual(status(reset + init), {'PATH': 'missing', 'pyenv': 'missing'})
+            self.source_file(target, '.pyenv/shims/pyenv', b'# target shim\n')
+            self.assertEqual(status(reset + init)['pyenv'], 'unverified')
+
+    def test_environment_repeated_sources_guards_and_attributes(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        source, target = self.observation_home(), self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        for home in (source, target):
+            self.source_file(home, '.zshenv', b'ZDOTDIR="$HOME/dots"\n')
+            self.source_file(home, 'dots/.zshrc', b'source "$HOME/vars"\nsource "$HOME/vars"\n')
+        declarations = (b'typeset -a names=("two words" "")\ntypeset -A options_map=(cat meow)\n'
+                        b'typeset -i COUNT="(2 + 3) * 8"\nexport EMPTY=\nunset OLD_VALUE\n'
+                        b'[[ -o interactive ]] && export LOCAL_FLAG=yes\n'
+                        b'export PATH=":$PATH::"\npath+=("$HOME/bin")\ntypeset -U path PATH\n')
+        self.source_file(source, 'vars', declarations)
+        destination = self.source_file(target, 'vars', b'# retained\n')
+        value = functions.observe.observe(str(source), helper, aliases=True, independent=True, environment=True).snapshot
+        self.assertEqual(len(value._value['items']), 9)
+        self.assertTrue(all(len(r['loads']) == 4 for r in value._value['items']))
+        def plan():
+            return functions.plan(value, str(target), helper=helper)
+        self.assertEqual({s for _, s, _ in plan().rows}, {'missing'})
+        self.assertTrue(functions.publish(value, str(target), helper=helper))
+        self.assertEqual(destination.read_bytes(), b'# retained\n' + declarations)
+        self.assertFalse(functions.publish(value, str(target), helper=helper))
+        (target / 'dots/.zshrc').write_bytes(b'source "$HOME/vars"\n')
+        self.assertEqual({s for _, s, _ in plan().rows}, {'unverified'})
+        destination.unlink()
+        destination.symlink_to(source / 'vars')
+        self.assertFalse(plan().writes)
+        with self.assertRaises(ValueError):
+            functions.publish(value, str(target), helper=helper)
+
+    def test_environment_conflict_guards_and_unselected_dependencies(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        source, target = self.observation_home(), self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        self.source_file(source, '.zshrc', b'ROOT="$HOME/test"\nDEST="$ROOT/bin"\nreadonly FIXED=one\n'
+                         b'FIXED=two\nHISTSIZE="danger"\nplugins=(git)\n')
+        value = functions.observe.observe(str(source), helper, aliases=True, independent=True, environment=True).snapshot
+        self.assertNotIn('plugins', {r['key'] for r in value._value['items']})
+        def plan(chosen):
+            return functions.plan(functions.state.select(value, [r['id'] for r in value._value['items'] if r['key'] in chosen]),
+                                  str(target), helper=helper)
+        self.assertEqual([s for _, s, _ in plan({'DEST'}).rows], ['unverified'])
+        self.assertEqual({s for _, s, _ in plan({'ROOT', 'DEST'}).rows}, {'missing'})
+        self.assertFalse(plan({'FIXED'}).writes)
+        self.assertEqual(plan({'HISTSIZE'}).rows[0][1], 'unverified')
+        self.source_file(source, '.zshenv', b'[[ -o interactive ]] && export GUARDED_VAR=x\nexport ALWAYS="$GUARDED_VAR"\n')
+        guarded = functions.observe.observe(str(source), helper, aliases=True, independent=True, environment=True).snapshot
+        chosen = functions.state.select(guarded, [r['id'] for r in guarded._value['items'] if r['key'] in ('GUARDED_VAR', 'ALWAYS')])
+        self.assertEqual({r['key']: s for r, s, _ in functions.plan(chosen, str(target), helper=helper).rows},
+                         {'GUARDED_VAR': 'missing', 'ALWAYS': 'unverified'})
+        self.source_file(target, '.zshrc', b'# managed by fixture\n')
+        self.assertFalse(plan({'ROOT'}).writes)
+        self.assertEqual(plan({'ROOT'}).rows[0][2], 'managed_source_prerequisite')
+        with self.assertRaises(functions.client.Invalid):
+            functions.publish(value, str(target), helper=helper, cancelled=lambda: True)
+        self.source_file(source, '.zprofile', b'export NVM_DIR="$HOME/.nvm"\n')
+        self.source_file(target, '.zshrc', b'. "$NVM_DIR/nvm.sh" --no-use\n')
+        bindings = functions.observe.observe(str(source), helper, aliases=True, independent=True, environment=True).snapshot
+        directory = functions.state.select(bindings, [r['id'] for r in bindings._value['items'] if r['key'] == 'NVM_DIR'])
+        check = functions.plan(directory, str(target), helper=helper)
+        self.assertEqual([(s, reason) for _, s, reason in check.rows], [('unverified', 'dependency_prerequisite')])
+        self.assertFalse(check.writes)
+        self.source_file(target, '.zprofile', b'export NVM_DIR="$HOME/.nvm"\n')
+        self.assertEqual([s for _, s, _ in functions.plan(directory, str(target), helper=helper).rows], ['matching'])
+
+    def test_partial_selection_dependency_matrix(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        home = self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        root = b'export BASE="$HOME/tools"\n'
+        derived = b'BIN="$BASE/bin"\n'
+        use = b'path=("$BIN" $path)\n'
+        retained = b"alias listing='pwd'\n"
+        startup = self.source_file(home, '.zshrc', root + derived + use + retained)
+        saved = functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True).snapshot
+        ids = {r['key']: r['id'] for r in saved._value['items']}
+        for keys, initial, expected in (
+                (['listing'], root + derived + use, ['missing']),
+                (['BIN', 'path'], root + retained, ['missing', 'missing']),
+                (['path'], root + derived + retained, ['missing']),
+                (['path'], root + derived + use + retained, ['matching']),
+                (['path'], derived + retained, ['unverified']),
+                (['path'], root.replace(b'tools', b'other') + derived + retained, ['unverified']),
+                (['BIN'], root + use + retained, ['missing'])):
+            with self.subTest(keys=keys, state=initial):
+                startup.write_bytes(initial)
+                value = functions.state.select(saved, [ids[k] for k in keys])
+                self.assertEqual(set(value._payloads), {functions.state.DEFINITIONS})
+                self.assertEqual(functions.state.encode(functions.state.select(value, [ids[k] for k in keys])),
+                                 functions.state.encode(value))
+                plan = functions.plan(value, str(home), helper=helper)
+                self.assertEqual(sorted(s for _, s, _ in plan.rows), expected)
+                self.assertEqual(startup.read_bytes(), initial)
+                if 'unverified' in expected:
+                    self.assertFalse(plan.writes)
+                    with self.assertRaises(ValueError):
+                        functions.publish(value, str(home), helper=helper)
+                else:
+                    self.assertEqual(functions.publish(value, str(home), helper=helper, expected=plan.evidence),
+                                     'missing' in expected)
+                    self.assertEqual(startup.read_bytes(), root + derived + use + retained)
+                    stat_before = startup.stat()
+                    again = functions.plan(value, str(home), helper=helper)
+                    self.assertTrue(all(s == 'matching' for _, s, _ in again.report_rows(compare=True)))
+                    self.assertFalse(functions.publish(value, str(home), helper=helper, expected=again.evidence))
+                    self.assertEqual((stat_before.st_ino, stat_before.st_mtime_ns),
+                                     (startup.stat().st_ino, startup.stat().st_mtime_ns))
+
+    def test_physical_occurrence_and_dependency_publication_order(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        home = self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        prefix, suffix = b'export PATH="$HOME/bin:$PATH"\n', b'export PATH="/bin"\n'
+        producer, consumer = b'BASE=one\n', b'VALUE="$BASE"\n'
+        source = b'source "$HOME/vars"\n'
+        startup = self.source_file(home, '.zshrc', source + prefix + suffix + consumer)
+        leaf = self.source_file(home, 'vars', producer)
+        def capture():
+            return functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True).snapshot
+        value = capture()
+        startup.write_bytes(source + suffix + consumer)
+        leaf.write_bytes(b'')
+        initial = functions.plan(value, str(home), helper=helper)
+        facts = {functions.content(value, r): (s, p) for r, s, p in initial.report_rows(compare=True)}
+        self.assertEqual(facts, {producer.strip(): ('missing', 'add'), prefix.strip(): ('missing', 'add'),
+                                 suffix.strip(): ('matching', 'preserve'), consumer.strip(): ('unverified', 'dependency_prerequisite')})
+        self.assertIn(('VALUE', 'pending'), [(r['key'], s) for r, s, _ in initial.report_rows(compare=False)])
+        # The consumer already exists. Now remove it to exercise cross-file publication order.
+        startup.write_bytes(source + suffix)
+        initial = functions.plan(value, str(home), helper=helper)
+        self.assertEqual(list(initial.writes), ['vars', '.zshrc'])
+        self.assertTrue(functions.publish(value, str(home), helper=helper, expected=initial.evidence))
+        self.assertEqual(startup.read_bytes(), source + prefix + suffix + consumer)
+        self.assertFalse(functions.publish(value, str(home), helper=helper))
+        startup.write_bytes(prefix * 2)
+        repeated = capture()
+        startup.write_bytes(prefix)
+        plan = functions.plan(repeated, str(home), helper=helper)
+        self.assertEqual({s for _, s, _ in plan.rows}, {'unverified'})
+        self.assertFalse(plan.writes)
+
+    def test_historical_partial_absence_and_selection_evidence_integrity(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        home = self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        before = b'eval "$(fixturetool init zsh)"\nexport PATH="$HOME/bin:$PATH"\n'
+        variable = b'export MY_BIN="$HOME/tools"\n'
+        startup = self.source_file(home, '.zshrc', before + b'# capture-only separator\n' + variable)
+        saved = functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True).snapshot
+        key = next(r['id'] for r in saved._value['items'] if r['key'] == 'MY_BIN')
+        narrowed = functions.state.select(saved, [key])
+        wire, files = functions.state.encode(narrowed)
+        self.assertEqual(files[functions.state.DEFINITIONS], variable.strip())
+        self.assertNotIn(b'$HOME/bin', wire)
+        self.assertEqual(narrowed._value['required_contracts']['selection-evidence'], 1)
+        legacy = copy.deepcopy(narrowed._value)
+        del legacy['selection_evidence'], legacy['required_contracts']['selection-evidence']
+        old = functions.state.decode(functions.state.MAGIC2 + json.dumps(legacy).encode(), files)
+        startup.write_bytes(before)
+        plan = functions.plan(old, str(home), helper=helper)
+        self.assertEqual(list(plan.report_rows(compare=True))[0][1:], ('missing', 'preserve'))
+        self.assertEqual(list(plan.report_rows(compare=False))[0][1:], ('unverified', 'source_prerequisite'))
+        self.assertFalse(plan.writes)
+        for tamper in ('contract', 'range', 'script'):
+            bad = copy.deepcopy(narrowed._value)
+            witnesses = bad['selection_evidence']['declarations']
+            first = next(iter(witnesses))
+            if tamper == 'contract':
+                del bad['required_contracts']['selection-evidence']
+            elif tamper == 'range':
+                witnesses[first]['offset'] = witnesses[first]['size']
+            else:
+                witnesses['shell-script:' + '0' * 64] = witnesses.pop(first)
+            with self.subTest(tamper=tamper), self.assertRaises(functions.state.Invalid):
+                functions.state.decode(functions.state.MAGIC2 + json.dumps(bad).encode(), files)
+        self.assertTrue(functions.plan(narrowed, str(home), helper=helper).writes)
+        # When a historical reference really does attest the reconstructed
+        # bytes, its retained predecessor is independent evidence.
+        startup.write_bytes(before + variable)
+        exact = functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True).snapshot
+        single = functions.state.select(exact, [key])
+        exact_manifest = copy.deepcopy(single._value)
+        del exact_manifest['selection_evidence'], exact_manifest['required_contracts']['selection-evidence']
+        old_exact = functions.state.decode(functions.state.MAGIC2 + json.dumps(exact_manifest).encode(), single._payloads)
+        startup.write_bytes(before)
+        self.assertTrue(functions.plan(old_exact, str(home), helper=helper).writes)
+        startup.write_bytes(before + b'eval "$UNBOUNDED"\n')
+        unqualified = functions.plan(old, str(home), helper=helper)
+        self.assertEqual(list(unqualified.report_rows(compare=True))[0][1], 'unverified')
+        self.assertFalse(unqualified.writes)
+        startup.write_bytes(b'# managed by fixture\n')
+        managed = functions.plan(narrowed, str(home), helper=helper)
+        self.assertEqual(list(managed.report_rows(compare=False))[0][1:], ('unverified', 'managed_source_prerequisite'))
+        self.assertEqual(list(managed.report_rows(compare=True))[0][1], 'missing')
+        self.assertFalse(managed.writes)
+        # Historical narrow mixed archives still carry enough B4 evidence
+        # for independent definitions, including an opaque script invocation.
+        commands = b"alias run_task='\"$HOME/Scripts/task\"'\nhello() { :; }\n"
+        startup.write_bytes(before + b'# capture-only separator\n' + variable + commands)
+        full = functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True).snapshot
+        selected = functions.state.select(full, [r['id'] for r in full._value['items'] if r['kind'] != 'path-operation'])
+        manifest = copy.deepcopy(selected._value)
+        del manifest['selection_evidence'], manifest['required_contracts']['selection-evidence']
+        old_mixed = functions.state.decode(functions.state.MAGIC2 + json.dumps(manifest).encode(), selected._payloads)
+        startup.write_bytes(before)
+        plan = functions.plan(old_mixed, str(home), helper=helper)
+        self.assertEqual(plan.skipped, {key})
+        self.assertEqual({r['kind']: s for r, s, _ in plan.rows},
+                         {'variable': 'unverified', 'alias': 'missing', 'function': 'missing'})
+        self.assertTrue(functions.publish(old_mixed, str(home), helper=helper, expected=plan.evidence))
+        self.assertEqual(startup.read_bytes(), before + commands)
+        self.assertFalse((home / 'Scripts/task').exists())
+        after = functions.plan(old_mixed, str(home), helper=helper)
+        self.assertEqual({r['kind']: s for r, s, _ in after.rows},
+                         {'variable': 'unverified', 'alias': 'matching', 'function': 'matching'})
+        self.assertFalse(after.writes)
+
+    def test_narrow_bindings_across_source_visits_and_defaults(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        home = self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        load = b'source "$HOME/settings"\n'
+        profile = self.source_file(home, '.zprofile', b'UNRELATED=yes\n' + load)
+        binding = self.source_file(home, 'settings', b'ROOT=old\nROOT=\n')
+        unrelated = self.source_file(home, '.zshrc', b"alias unused='pwd'\n")
+        startup = self.source_file(home, '.zlogin', b'VALUE="${ROOT:-default}/$ROOT"\n')
+        def capture():
+            full = functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True).snapshot
+            key = next(r['id'] for r in full._value['items'] if r['key'] == 'VALUE')
+            return functions.state.select(full, [key])
+        value = capture()
+        unrelated.unlink()
+        profile.write_bytes(load)
+        startup.write_bytes(b'')
+        plan = functions.plan(value, str(home), helper=helper)
+        self.assertEqual([(s, p) for _, s, p in plan.rows], [('missing', 'add')])
+        self.assertEqual(list(plan.writes), ['.zlogin'])
+        self.assertTrue(functions.publish(value, str(home), expected=plan.evidence, helper=helper))
+        self.assertFalse(functions.publish(value, str(home), helper=helper))
+        binding.write_bytes(b'ROOT=old\nROOT=different\n')
+        self.assertEqual(functions.plan(value, str(home), helper=helper).rows[0][1:], ('unverified', 'dependency_prerequisite'))
+        binding.write_bytes(b'unset ROOT\n')
+        # An optional read of the same name does not discharge a required read.
+        self.assertEqual(functions.plan(capture(), str(home), helper=helper).rows[0][1:],
+                         ('unverified', 'dependency_prerequisite'))
+        for expression in (b'${ROOT:-fallback}', b'${ROOT-fallback}', b'${ROOT:+value}', b'${ROOT+value}'):
+            startup.write_bytes(b'VALUE="' + expression + b'"\n')
+            self.assertEqual(functions.plan(capture(), str(home), helper=helper).rows[0][1:], ('matching', 'preserve'))
+
+    def test_shifted_existing_declarations_in_narrow_post_restore_check(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        home = self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        login = b'export FIXTURE_LOGIN=ready\n'
+        later = b'eval "$(fixturetool init zsh)"\n'
+        preceding = b'export PATH="$HOME/bin:$PATH"\n'
+        binding = b'export FIXTURE_BIN="$HOME/tools"\n'
+        use = b'export PATH="$FIXTURE_BIN:$PATH"\n'
+        comment = b'# capture-only marker\n'
+        profile = self.source_file(home, '.zprofile', comment + login)
+        rc = self.source_file(home, '.zshrc', later + preceding + comment + binding + use)
+        saved = functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True).snapshot
+        ids = [r['id'] for r in saved._value['items'] if functions.content(saved, r) != preceding.strip()]
+        narrow = functions.state.select(saved, ids)
+        # The historical format retained selected bytes and whole-file hashes,
+        # without receipts for the omitted preceding PATH operation.
+        manifest = copy.deepcopy(narrow._value)
+        del manifest['selection_evidence'], manifest['required_contracts']['selection-evidence']
+        historical = functions.state.decode(functions.state.MAGIC2 + json.dumps(manifest).encode(), narrow._payloads)
+
+        def check(value):
+            plan = functions.plan(value, str(home), helper=helper)
+            self.assertFalse(plan.writes)
+            return {r['key']: (s, reason) for r, s, reason in plan.report_rows(compare=True)}
+
+        match, unknown = ('matching', 'preserve'), ('unverified', 'source_prerequisite')
+        profile.write_bytes(login)
+        rc.write_bytes(later + preceding + binding + use)
+        self.assertEqual(check(historical), dict(FIXTURE_LOGIN=match, FIXTURE_BIN=unknown, PATH=unknown))
+        self.assertEqual(check(narrow), dict(FIXTURE_LOGIN=match, FIXTURE_BIN=match, PATH=match))
+        rc.write_bytes(later + binding + use)
+        self.assertEqual(check(narrow)['PATH'], ('unverified', 'dependency_prerequisite'))
+        rc.write_bytes(b'eval "$DYNAMIC"\n' + preceding + binding + use)
+        self.assertEqual(check(historical)['FIXTURE_LOGIN'], unknown)
+        rc.write_bytes(later + preceding + binding + use)
+        profile.write_bytes(later + login)
+        self.assertEqual(check(historical)['FIXTURE_LOGIN'], unknown)
+        profile.write_bytes(b'export FIXTURE_LOGIN=changed\n')
+        self.assertEqual(check(historical)['FIXTURE_LOGIN'], ('differing', 'target_conflict'))
+        profile.write_bytes(b'# declaration absent\n')
+        self.assertEqual(check(historical)['FIXTURE_LOGIN'], ('missing', 'preserve'))
+
+    def test_environment_cross_stage_and_narrowed_bindings(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        home = self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        self.source_file(home, '.zprofile', b'eval "$(brew shellenv)"\nexport LOGIN_MARK=ready\n')
+        preceding = b'export PATH="$HOME/tools:$PATH"\n'
+        binding = b'export TOOL_BIN="$HOME/bin"\n'
+        use = b'export PATH="$TOOL_BIN:$PATH"\n'
+        rc = self.source_file(home, '.zshrc', b'eval "$(other-init)"\n' + preceding + binding + use)
+        def observe():
+            return functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True).snapshot
+        saved = observe()
+        def select(raw, value=saved):
+            return functions.state.select(value, [r['id'] for r in value._value['items']
+                                                  if functions.content(value, r) == raw.strip()])
+        def inspect(value):
+            plan = functions.plan(value, str(home), helper=helper)
+            self.assertFalse(plan.writes)
+            return [(s, p) for _, s, p in plan.rows]
+        matched = [('matching', 'preserve')]
+        for raw in (b'export LOGIN_MARK=ready', preceding, binding, use):
+            self.assertEqual(inspect(select(raw)), matched)
+        # The same spelling on a changed target lacks the archived physical evidence.
+        rc.write_bytes(preceding + binding.replace(b'/bin', b'/elsewhere') + use)
+        self.assertEqual(inspect(select(use)), [('unverified', 'dependency_prerequisite')])
+        rc.write_bytes(preceding + use + binding)
+        self.assertEqual(inspect(select(use)), [('unverified', 'dependency_prerequisite')])
+        rc.write_bytes(preceding + use)
+        self.assertEqual(inspect(select(use)), [('unverified', 'dependency_prerequisite')])
+        rc.write_bytes(preceding + binding + b'eval "$(other-init)"\n' + use)
+        self.assertEqual(inspect(select(use, observe())), [('unverified', 'dependency_prerequisite')])
+        rc.write_bytes(b'[[ -o login ]] && ' + binding + use)
+        self.assertEqual(inspect(select(use, observe())), [('unverified', 'dependency_prerequisite')])
+        rc.write_bytes(binding + b'unset TOOL_BIN\n' + use)
+        self.assertEqual(inspect(select(use, observe())), [('unverified', 'dependency_prerequisite')])
+
+    def test_partial_tail_requires_anchors_dependency_order_and_safe_destination(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        home = self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        init = b'eval "$(fixturetool init zsh)"\n'
+        earlier = b'export PATH="$HOME/bin:$PATH"\n'
+        option = b'setopt interactivecomments\n'
+        binding = b'export FIXTURE_BIN="$HOME/tools"\n'
+        use = b'export PATH="$FIXTURE_BIN:$PATH"\n'
+        original = init + earlier + option
+        rc = self.source_file(home, '.zshrc', original + b'# selected tail\n' + binding + use)
+        saved = functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True).snapshot
+        def inspect(value=saved):
+            plan = functions.plan(value, str(home), helper=helper)
+            return plan, {functions.content(value, r): (s, reason) for r, s, reason in plan.rows}
+        rc.write_bytes(original)
+        paths = functions.state.select(saved, [r['id'] for r in saved._value['items'] if r['kind'] == 'path-operation'])
+        plan, rows = inspect(paths)
+        self.assertEqual(rows[earlier.strip()], ('matching', 'preserve'))
+        self.assertEqual(rows[use.strip()], ('unverified', 'dependency_prerequisite'))
+        self.assertFalse(plan.writes)
+        rc.write_bytes(original + use + binding)
+        plan, rows = inspect()
+        self.assertEqual(rows[earlier.strip()], ('matching', 'preserve'))
+        self.assertEqual(rows[use.strip()][0], 'unverified')
+        self.assertFalse(plan.writes)
+        for raw in (earlier + init + option, original + b'eval "$DYNAMIC"\n',
+                    original + b'setopt SH_WORD_SPLIT\n', b'# externally managed by fixture\n' + original):
+            rc.write_bytes(raw)
+            plan, rows = inspect()
+            self.assertEqual(rows[binding.strip()][0], 'unverified')
+            self.assertFalse(plan.writes)
+        rc.write_bytes(original)
+        profile = self.source_file(home, '.zprofile', b'export PROFILE_BASE=yes\n')
+        profile_base = profile.read_bytes()
+        for declaration in (b'export ONE=a TWO=b', b'export FIXTURETOOL_CONFIG=relative',
+                            b'export PATH="$HOME/other:$PATH"'):
+            profile.write_bytes(profile_base + declaration + b'\n')
+            captured = functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True).snapshot
+            profile.write_bytes(profile_base)
+            plan, rows = inspect(captured)
+            self.assertEqual(rows[declaration][0], 'unverified')
+            self.assertFalse(plan.writes)
+        rc.chmod(0o666)
+        self.assertFalse(inspect()[0].writes)
+
+    def test_homebrew_initializer_restore_presentation(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        source, target = self.observation_home(), self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        self.source_file(source, '.zprofile', b'eval "$(brew shellenv)"\n')
+        path = b'export PATH="$HOME/bin:$PATH"\n'
+        self.source_file(source, '.zshrc', path)
+        saved = functions.observe.observe(str(source), helper, aliases=True, independent=True, environment=True).snapshot
+        metadata = functions.state.environment.requirement_details(saved)
+        brew = next(row for row in saved._value['items'] if row['kind'] == 'initializer')
+        self.assertEqual((metadata[brew['id']]['context'], metadata[brew['id']]['origin']), ('Login shells', 'the Zsh login profile'))
+        # Supply the independently enrolled prefix and reviewed release of a synthetic
+        # installation. Keep all file, byte, permission and freshness checks inside it.
+        with tempfile.TemporaryDirectory(prefix='b5-brew-', dir='/private/tmp') as directory:
+            prefix = Path(directory)
+            files = [self.source_file(prefix, 'bin/brew', b'#!/bin/sh\nexit 99\n'),
+                     self.source_file(prefix, 'Library/Homebrew/brew.sh', b'# dispatcher\n'),
+                     self.source_file(prefix, 'Library/Homebrew/cmd/shellenv.sh', b'# shellenv\n')]
+            files[0].chmod(0o700)
+            release = tuple(hashlib.sha256(f.read_bytes()).hexdigest() for f in files)
+            stamp = functions.providers._stamp
+            def fixture_stamp(file, evidence, **options):
+                return file.lstat() if file in prefix.parents else stamp(file, evidence, **options)
+            with patch.object(functions.providers, '_prefixes', return_value=[prefix]), \
+                    patch.object(functions.providers, '_stamp', fixture_stamp), \
+                    patch.object(functions.providers, 'BREW_RELEASES', {release: ((), False)}):
+                plan = functions.plan(saved, str(target), helper=helper)
+                self.assertEqual({status for _, status, _ in plan.rows}, {'missing'}, plan.rows)
+                self.assertFalse((target / '.zprofile').exists())
+                self.assertTrue(functions.publish(saved, str(target), helper=helper, expected=plan.evidence))
+                self.assertEqual((target / '.zprofile').read_text(), f'eval "$({files[0]} shellenv zsh)"\n')
+                self.assertEqual((target / '.zshrc').read_bytes(), path)
+                self.assertEqual({s for _, s, _ in functions.plan(saved, str(target), helper=helper).rows}, {'matching'})
+                self.assertFalse(functions.publish(saved, str(target), helper=helper))
+                # Recapture the qualified absolute launcher alongside bounded
+                # partial interactive startup and an externally managed alias.
+                self.source_file(target, 'aliases', b"# managed by fixture\nalias listing='pwd'\n")
+                self.source_file(target, '.zshrc', b'eval "$(other-init)"\n' + path +
+                                 b'source "$HOME/aliases"\nsetopt AUTO_CD\n')
+                mixed = functions.observe.observe(str(target), helper, aliases=True, independent=True,
+                                                  environment=True).snapshot
+                matched = functions.plan(mixed, str(target), helper=helper)
+                self.assertEqual({r['kind']: s for r, s, _ in matched.rows},
+                                 {'alias': 'matching', 'initializer': 'matching', 'path-operation': 'matching'})
+                self.assertFalse(matched.writes)
+                profile = target / '.zprofile'
+                launcher = profile.read_bytes()
+                # A later interactive init stays outside the login-stage lookup.
+                # Reconstruct the selected append without copying its QA comment.
+                rc = target / '.zshrc'
+                interactive = b'eval "$(prompt-tool init zsh)"\n' + path + b'setopt interactivecomments\n'
+                rc.write_bytes(interactive)
+                login = b'export FIXTURE_LOGIN=yes\n'
+                profile.write_bytes(launcher + b'# capture-only comment\n' + login)
+                captured = functions.observe.observe(str(target), helper, aliases=True, independent=True, environment=True).snapshot
+                profile.write_bytes(launcher)
+                partial = functions.plan(captured, str(target), helper=helper)
+                self.assertEqual({r['kind']: s for r, s, _ in partial.rows},
+                                 {'initializer': 'matching', 'path-operation': 'matching', 'variable': 'missing'})
+                self.assertEqual(partial.writes, {'.zprofile': launcher + login})
+                self.assertTrue(functions.publish(captured, str(target), helper=helper, expected=partial.evidence))
+                self.assertEqual(rc.read_bytes(), interactive)
+                self.assertEqual(profile.read_bytes(), launcher + login)
+                self.assertFalse(functions.publish(captured, str(target), helper=helper))
+                rc.write_bytes(b'eval "$(other-init)"\n' + path + b'source "$HOME/aliases"\nsetopt AUTO_CD\n')
+                profile.write_bytes(b'eval "$(other-init)"\n' + launcher)
+                uncertain = functions.observe.observe(str(target), helper, aliases=True, independent=True,
+                                                      environment=True).snapshot
+                checked = functions.plan(uncertain, str(target), helper=helper)
+                self.assertEqual(next((s, p) for r, s, p in checked.rows if r['kind'] == 'initializer'),
+                                 ('unverified', 'source_prerequisite'))
+                self.assertFalse(checked.writes)
+                profile.write_bytes(launcher)
+                files[1].write_bytes(b'# unreviewed\n')
+                observed = functions.plan(mixed, str(target), helper=helper)
+                self.assertEqual({r['kind']: (s, p) for r, s, p in observed.rows},
+                                 {'initializer': ('unverified', 'tool_observation_prerequisite'),
+                                  'path-operation': ('matching', 'preserve'), 'alias': ('matching', 'preserve')})
+                self.assertFalse(observed.writes)
+
+    def test_activation_scope_with_unverified_provider_and_incomplete_source(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        home = self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        self.source_file(home, '.zprofile', b'eval "$(/opt/homebrew/bin/brew shellenv zsh)"\n')
+        startup = b"alias listing='pwd'\n" + b'export PATH="$HOME/bin:$PATH"\nsetopt AUTO_CD\n'
+        rc = self.source_file(home, '.zshrc', startup)
+        saved = functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True).snapshot
+        with patch.object(functions.providers, '_prefixes', return_value=[]):
+            checked = functions.plan(saved, str(home), helper=helper)
+            self.assertEqual(checked.observed.codes, ('unsupported_context',))
+            self.assertEqual(checked.coverage, 'information')
+            self.assertEqual({r['kind']: (s, p) for r, s, p in checked.rows},
+                             {'alias': ('matching', 'preserve'), 'path-operation': ('matching', 'preserve'),
+                              'initializer': ('unverified', 'tool_missing_prerequisite')})
+            rc.write_bytes(startup.replace(b"'pwd'", b"'dirs'"))
+            changed = functions.plan(saved, str(home), helper=helper)
+            self.assertEqual(changed.coverage, 'information')
+            self.assertIn(('alias', 'differing'), [(r['kind'], s) for r, s, _ in changed.rows])
+            rc.write_bytes(b'source "$HOME/missing"\n' + startup)
+            incomplete = functions.plan(saved, str(home), helper=helper)
+            self.assertIn('source_unresolved', incomplete.observed.codes)
+            self.assertEqual(incomplete.coverage, 'partial')
+            self.assertFalse(incomplete.writes)
+            path = functions.state.select(saved, [r['id'] for r in saved._value['items'] if r['kind'] == 'path-operation'])
+            missing = functions.plan(path, str(self.observation_home()), helper=helper)
+            self.assertEqual(missing.coverage, 'information')
+            self.assertEqual([s for _, s, _ in missing.rows], ['missing'])
+
+    def test_mixed_conformity_in_partial_and_managed_sources(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        home = self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        path = b'export PATH="$HOME/.local/bin:$PATH"\n'
+        startup = b'eval "$(other-init)"\n' + path + b'portable() { :; }\nsource "$HOME/aliases"\nsetopt AUTO_CD\n'
+        rc = self.source_file(home, '.zshrc', startup)
+        original = b"# managed by fixture\nalias listing='pwd'\n"
+        leaf = self.source_file(home, 'aliases', original)
+        observation = functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True)
+        self.assertEqual(observation.codes, ('unsupported_context',))
+        mixed = observation.snapshot
+        definitions = functions.state.select(mixed, [r['id'] for r in mixed._value['items'] if r['kind'] in ('alias', 'function')])
+        self.assertEqual((definitions._value['schema'], mixed._value['schema']), (1, 2))
+
+        def inspect(saved=mixed):
+            plan = functions.plan(saved, str(home), helper=helper)
+            self.assertFalse(plan.writes)
+            return {r['kind']: (s, p) for r, s, p in plan.rows}
+
+        match = ('matching', 'preserve')
+        self.assertEqual(inspect(definitions), {'alias': match, 'function': match})
+        self.assertEqual(inspect(), {'alias': match, 'function': match, 'path-operation': match})
+        leaf.write_bytes(original.replace(b'pwd', b'dirs'))
+        self.assertEqual(inspect(), {'alias': ('differing', 'target_conflict'), 'function': match, 'path-operation': match})
+        leaf.write_bytes(b'# managed by fixture\n')
+        self.assertEqual(inspect()['alias'], ('unverified', 'managed_source_prerequisite'))
+        with self.assertRaises(functions.base.Invalid):
+            functions.publish(mixed, str(home), helper=helper)
+        self.assertEqual(leaf.read_bytes(), b'# managed by fixture\n')
+        leaf.write_bytes(original)
+        rc.write_bytes(startup.replace(path, b''))
+        self.assertEqual(inspect()['path-operation'], ('unverified', 'source_prerequisite'))
+        rc.write_bytes(startup + b'eval "$LATER_OVERRIDE"\n')
+        self.assertEqual(set(inspect().values()), {('unverified', 'source_prerequisite')})
+        late = functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True).snapshot
+        self.assertEqual(inspect(late)['path-operation'], ('unverified', 'source_prerequisite'))
+        rc.write_bytes(startup)
+        leaf.chmod(0o666)
+        self.assertTrue(all(s == 'unverified' for s, _ in inspect().values()))
+        leaf.chmod(0o600)
+        leaf.write_bytes(b'portable() { :; }\n')
+        rc.write_bytes(path + b'source "$HOME/aliases"\n' * 2)
+        repeated = functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True).snapshot
+        self.assertEqual(inspect(repeated), {'function': match, 'path-operation': match})
+        for load in repeated._value['loads']:
+            if load['parent'] is None:
+                load['condition'] = 'conditional'
+        self.assertEqual(inspect(repeated)['function'], ('unverified', 'source_prerequisite'))
+
+    def test_environment_recovery_projection_and_insertion(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        source, target = self.observation_home(), self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        prefix = b'export PROJECT_ROOT="$HOME/projects"\n'
+        middle = b'export BIN="$PROJECT_ROOT/bin"\npath+=("$BIN")\ntypeset -U PATH path\n'
+        tail = b"alias listing='ls -la'\n"
+        self.source_file(source, '.zshrc', prefix + middle + tail)
+        self.source_file(source, '.zprofile', b'export LANG=en_US.UTF-8\n')
+        original = self.source_file(target, '.zshrc', prefix + b'# target comment\n' + tail)
+        value = functions.observe.observe(str(source), helper, aliases=True, independent=True, environment=True).snapshot
+        self.assertEqual(len(value._value['items']), 6)
+        def plan():
+            return functions.plan(value, str(target), helper=helper)
+        initial = plan()
+        self.assertEqual(sorted(s for _, s, _ in initial.rows), ['matching'] * 2 + ['missing'] * 4, initial.rows)
+        self.assertEqual(initial.writes['.zshrc'], prefix + b'# target comment\n' + middle + tail)
+        self.assertTrue(functions.publish(value, str(target), helper=helper, expected=initial.evidence))
+        self.assertEqual({s for _, s, _ in plan().rows}, {'matching'})
+        before = original.stat()
+        self.assertFalse(functions.publish(value, str(target), helper=helper))
+        self.assertEqual((before.st_ino, before.st_mtime_ns), (original.stat().st_ino, original.stat().st_mtime_ns))
+        original.write_bytes(original.read_bytes().replace(b'projects', b'other'))
+        self.assertIn('differing', {s for _, s, _ in plan().rows})
+        with self.assertRaisesRegex(ValueError, 'target_changed'):
+            functions.publish(value, str(target), expected=initial.evidence, helper=helper)
+
+    def test_environment_structural_capture_order_selection_and_integrity(self):
+        home = self.observation_home()
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        self.source_file(home, '.zshenv', b'export LANG=en_US.UTF-8\n')
+        self.source_file(home, '.zprofile', b'eval "$(/opt/homebrew/bin/brew shellenv zsh)"\n')
+        self.source_file(home, '.zshrc', b'source "$HOME/paths"\nsource "$HOME/paths"\nsource "$HOME/ghp_privatefixture1234"\n')
+        self.source_file(home, 'ghp_privatefixture1234', b'SHOULD_STAY_PRIVATE=yes\n')
+        raw = (b'ROOT="$HOME/work"\nBIN="${ROOT:-fallback}/bin"\n'
+               b'path=("$HOME/bin" $path)\npath+=("$HOME/bin")\n'
+               b'export PATH=":$PATH::"\ntypeset -U path\ntypeset -U PATH\n'
+               b'typeset -a tools=(git "two words" "")\ntypeset -A map=(build make test pytest)\n'
+               b'typeset -i JOBS=8\nreadonly LOCK=value\nexport EMPTY=\nexport BARE\nunset PREVIOUS\n'
+               b'export FIRST=one SECOND=two\n[[ -o interactive ]] && GUARDED=yes\n'
+               b'NVM_DIR="$HOME/.nvm"\n[[ -s "$NVM_DIR/nvm.sh" ]] && . "$NVM_DIR/nvm.sh"\n'
+               b"PREF='line one\nline two'\nLITERAL='$HOME'\n"
+               b'unsafe() { LOCAL=hidden; }\nCOLOR=ghp_privatefixture1234\nBAD="${API_KEY:-x}"\n'
+               b'COPIED="$COLOR/suffix"\nCHAIN=$COPIED\nMAP=(ghp_secretmarker shown)\n'
+               b'badlist=(one ghp_privatefixture1234)\nBADURL=https://a:b@host\n'
+               b'OPAQUE=$(touch should-not-execute)\n')
+        self.source_file(home, 'paths', raw)
+        _, value, payloads = self.observed(home, aliases=True, independent=True, environment=True)
+        b5 = [i for i in value['items'] if i['kind'] in state.environment.KINDS]
+        rows = {i['key']: i for i in b5}
+        self.assertEqual({r['kind'] for r in b5}, set(state.environment.KINDS))
+        self.assertTrue({'ROOT','BIN','path','PATH','tools','map','JOBS','LOCK','EMPTY','BARE','PREVIOUS','FIRST',
+                         'GUARDED','PREF','LITERAL','LANG','Homebrew'} <= set(rows), sorted(rows))
+        self.assertFalse({'SECOND','LOCAL','COLOR','BAD','badlist','BADURL','OPAQUE','MAP','COPIED','CHAIN','SHOULD_STAY_PRIVATE'} & set(rows))
+        self.assertNotIn('ghp_privatefixture', json.dumps(value))
+        self.assertEqual(len(rows['ROOT']['loads']), 4)
+        self.assertEqual(rows['GUARDED']['details']['intent']['guard'], 'interactive')
+        self.assertEqual(rows['LITERAL']['details']['intent']['words'], [[['literal', '$HOME']]])
+        self.assertEqual(len(rows['FIRST']['details']['intent']['members']), 2)
+        self.assertEqual(len([i for i in b5 if i['key'] == 'path']), 3)
+        self.assertTrue(any(d['owner'] == rows['BIN']['id'] and d['target']['id'] == rows['ROOT']['id'] for d in value['dependencies']))
+        self.assertTrue(any(d['owner'] == rows['nvm']['id'] and d['target']['id'] == rows['NVM_DIR']['id'] for d in value['dependencies']))
+        self.assertNotIn(b'privatefixture', payloads[state.DEFINITIONS])
+        self.assertFalse((home / 'should-not-execute').exists())
+        wire = state.MAGIC2 + json.dumps(value).encode()
+        snap = state.decode(wire, payloads)
+        with patch.object(functions.observe, 'observe') as target_observation:
+            with self.assertRaises(ValueError):
+                functions.plan(functions.state.decode(wire.replace(b'"schema": 2', b'"schema": 3'), payloads), str(home))
+            target_observation.assert_not_called()
+        for iid in (rows['BIN']['id'], rows['path']['id']):
+            single = state.select(snap, [iid])
+            self.assertEqual(len(single._value['items']), 1)
+            self.assertEqual(single._value['dependencies'], [])
+        forged = copy.deepcopy(value)
+        next(i for i in forged['items'] if i['key'] == 'JOBS')['details']['intent']['words'] = []
+        for data in (state.MAGIC2 + json.dumps(forged).encode(), state.MAGIC + json.dumps(value).encode()):
+            with self.assertRaises(state.Invalid):
+                state.decode(data, payloads)
+
+    def test_older_parser_preserves_sourced_b4_inventory(self):
+        home = self.observation_home()
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        self.source_file(home, '.zshrc', b'source "$HOME/commands"\n')
+        self.source_file(home, 'commands', b'editor() { :; }\nexport EDITOR=nvim\n')
+        helper = observer.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        parse = helper.parse
+        def original_response(*args, **kwargs):
+            response = json.loads(parse(*args, **kwargs))
+            response.pop('statements')
+            return json.dumps(response).encode()
+        with patch.object(helper, 'parse', side_effect=original_response):
+            result = observer.observe(str(home), helper, aliases=True, independent=True, environment=True)
+        self.assertIn('environment_spans_unavailable', result.codes)
+        self.assertEqual([(r['kind'], r['key']) for r in result.snapshot._value['items']], [('function', 'editor')])
+        self.assertEqual(result.snapshot._value['schema'], 1)
+
     def test_complex_alias_qualification_and_sanitized_exclusions(self):
         home = self.observation_home()
         if not self.enforcing():

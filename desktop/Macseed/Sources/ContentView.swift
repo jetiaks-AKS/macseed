@@ -97,6 +97,12 @@ enum WorkspaceCategoryStyle {
 struct WorkspaceSectionHeader: View {
     let title: String
     var prominent = false
+    static func row<Heading: View>(controls: AnyView?, @ViewBuilder heading: () -> Heading) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            heading()
+            if let controls { controls.padding(.trailing, 42) }
+        }
+    }
     var body: some View {
         HStack(spacing: 12) {
             Text(title).font(.system(size: prominent ? 15 : 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))
@@ -122,10 +128,11 @@ struct WorkspaceCategoryTitle: View {
     let title: String
     let fallbackSymbol: String
     var developerGroup: DeveloperSelectionGroup? = nil
+    var usesProvidedTitle = false
     var body: some View {
         HStack(spacing: 12) {
             WorkspaceCategoryIcon(symbol: WorkspaceCategoryStyle.symbol(id, fallback: fallbackSymbol), domainID: id)
-            Text(DeveloperSelectionGroup.label(id, fallback: title, parent: developerGroup)).font(.body.weight(.medium))
+            Text(usesProvidedTitle ? title : DeveloperSelectionGroup.label(id, fallback: title, parent: developerGroup)).font(.body.weight(.medium))
         }
     }
 }

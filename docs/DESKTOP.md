@@ -270,6 +270,13 @@ default and uses the key icon; Configuration and SSH Keys retain their independe
 Host/identity controls and protected transport. Confirmation uses the same headings over prepared scope, with Ready to Save statuses
 and without selection controls.
 
+Extend an existing hierarchy through its shared category header, disclosure style,
+native checkbox and selection owner. Sibling rows share the icon, typography,
+indentation, spacing and status/count columns of their level. Keep each child in
+that hierarchy and derive parent state from its eligible descendants and existing
+consent rules. Before handoff, open the rebuilt Native app and check the affected
+rows, disclosures, counters and independent selections together.
+
 Visual group headers retain leading disclosure chevrons. Selectable categories,
 including Configuration and SSH Keys, reuse the native trailing disclosure layout:
 the status/count rail precedes the common right-hand chevron column. Collapsed
@@ -358,8 +365,9 @@ when its count is positive.
 
 The ordinary group headers, Git, SSH, Workspace, Shell, Custom Commands, SSH Keys and VS Code have native tri-state masters:
 **checked** means all eligible descendants, **unchecked** none, and **mixed** a
-partial selection. Clicking checked clears the eligible scope; clicking unchecked
-or mixed selects that group's eligible scope. SSH preserves an existing identity
+partial selection. Clicking an unchecked master selects its eligible scope and clicking
+a checked master clears it. A mixed Shell, Custom Commands or Variables & PATH
+master clears its scope. The other group masters retain their mixed-click behavior. SSH preserves an existing identity
 subset: its group can remain mixed until the user explicitly changes SSH Keys.
 Shell and Custom Commands include eligible files but require an explicit native
 confirmation before adding executable-file consent. Scripts has an exact-scope
@@ -740,8 +748,12 @@ or Rebuild Selection.
 Only existing scoped rows appear beneath static `WorkspaceSectionHeader` text/dividers.
 Empty headings are hidden. Section headers have no checkbox or disclosure; logical
 categories retain their status/count columns and independently collapsed children.
-Expand All / Collapse All includes visible parent and child category IDs. These
-controls never run comparison or change the reference. Extras, excluded/no-requirement
+The fixed Details by Category heading sits above the list. Standard Setup and
+For Experienced Users use Rebuild Selection’s inline Expand All / Collapse All
+action at the right of each scrolling section header. Each action covers only
+its own categories and descendants, including nested Shell groups. A partially expanded scope offers Expand All. Check Again
+starts the new result with collapsed categories. These controls never run comparison
+or change the reference. Extras, excluded/no-requirement
 rows and extra-only categories retain their existing main-window visibility rules
 and remain in underlying evidence; independent problems are not filtered out.
 
@@ -1542,7 +1554,20 @@ remain unselected with sanitized reasons. Ordinary alias selection survives a
 script rejection. Cancel stops the pending check and permits retry without Scan.
 Known rejected files remain explained and outside the eligible parent scope.
 
-**Variables & PATH** and **Settings** remain planned; **Plugins & Themes** is conditional
+**Variables & PATH** and **Custom Commands** are sibling categories under Shell.
+Shell selects all eligible children of both categories. Variables & PATH selects
+only its listed declarations and initializers. Either action authorizes the exact
+selected IDs for plaintext Capture. Individual declaration checkboxes operate
+independently. Only adding executable Scripts requires a separate decision. Item Info shows Core’s explanation, startup context and origin.
+Excluded declarations share one compact, sanitized Info explanation. Rebuild uses
+its existing Shell selection controls for Variables & PATH alongside Custom Commands.
+Preview reports Core's target qualifications, including conflicts. The universal
+Rebuild confirmation and separate Scripts consent retain their established behavior.
+Desktop binds the validated v2 Bundle inventory to the recovery capability of
+the active Core. Selection and Preview show the saved startup context and
+destination. Prepared item-local skips retain their own Result and Check outcomes.
+A fresh Preview with no executable changes leaves Rebuild unavailable.
+The [controlled mixed real-Mac workflow](qualification/SHELL-VARIABLES-PATH-2026-11-20.md#controlled-real-mac-acceptance) passed. Progress uses one flat Shell row for a mixed selection and the selected category name for a single qualified category. **Settings** remains planned; **Plugins & Themes** is conditional
 on useful Core support and relevant items. Empty future categories are hidden.
 Historical whole-file snapshots retain **Shell → Settings → Saved Zsh file**, their
 `shell-zsh` identity and behavior. Source files, ZDOTDIR and dependency directories
@@ -1551,9 +1576,11 @@ do not become disclosure levels. There is no extra Zsh Configuration wrapper.
 Names are display metadata; Swift never decodes command bodies or resolves source
 paths. Check/Preview count each Alias/Function once, with independent **Shell coverage**
 evidence. Core's `shell_activation_unknown` informational record does not add an
-attention badge or requirement when all selected typed Shell items match. Check
-shows the explanation in Aliases & Functions help, or Scripts help for a scripts-only
-selection. Preview uses existing category scope help and keeps normal Already Matches counts. Runtime activation and dynamic startup remain unverified.
+attention badge or requirement. Check keeps this explanation in category help.
+It describes matching definitions or Variables & PATH only when the corresponding
+items match. Preview keeps matching rows in its counts and hides fully satisfied Shell child branches.
+A blocked Variables & PATH prerequisite uses declaration or startup-order guidance.
+File prerequisites retain the Scripts guidance. Runtime activation and dynamic startup remain unverified.
 Other scope warnings and unresolved selected requirements retain Needs Attention.
 Matching rows remain suppressed in Preview. Coverage text
 explicitly distinguishes matching aliases from other unsupported/unincluded Shell
@@ -1572,19 +1599,20 @@ Its checkbox selects the exact currently eligible files; it never grants wildcar
 permission. Shell and Custom Commands include eligible scripts in their selection
 state: all aliases with scripts excluded is **Partially Selected**. Rebuild's footer
 likewise reports **Some items excluded** while eligible scripts remain excluded.
-Selecting either parent presents one native confirmation only when it would add script permissions:
-**Aliases only** preserves existing manual script choices, **Include N scripts**
-authorizes the listed file identities, and **Cancel** leaves selection unchanged.
-The reviewed candidates and observation identities must still match when accepted.
-Clicking a mixed or fully selected Shell / Custom Commands parent clears all its
-children without consent; only an empty parent starts inclusion. Individual alias
-deselection preserves independently authorized scripts. Main selection headers keep
-All Selected / Partially Selected / Not Selected; nested item-count rows show
-`N of M selected` only when N is positive, with no status text at zero.
-Individual files, expanded Scripts, Aliases & Functions and group deselection do not
-prompt. Selecting collapsed Scripts uses the same native confirmation so executable
-disclosure is visible at authorization; **Keep current selection** and **Cancel**
-preserve all choices, and **Include N scripts** does not select additional aliases.
+In Capture, clicking an unchecked Shell or Custom Commands parent selects its eligible children.
+If any new Script needs authorization, **Include executable scripts?** lists those files
+and explains that executable code is saved unencrypted. **Include Scripts** requests
+per-file qualification. **Continue Without Scripts** selects the ordinary children
+in scope and excludes all Scripts. **Cancel** preserves the entire previous selection.
+Clicking a checked or mixed parent clears its children immediately without a dialog. Selecting collapsed Scripts
+uses the same decision for files alone. Individual alias deselection preserves independent
+file choices. Variables & PATH shows one selected count, or **Not Selected** at zero.
+
+Rebuild retains its existing parent behavior. A mixed or checked parent clears its
+children. For a previously empty parent, **Aliases & Functions only** keeps existing
+file choices, **Include N scripts** authorizes the listed identities, and **Cancel**
+preserves selection. For collapsed Scripts, **Keep current selection** leaves all choices
+unchanged. Both workflows recheck candidates and their observation identities.
 Unchanged authorized files do not prompt again. Expanding/collapsing never
 grants consent. Selecting an alias proposes associated files without selecting them.
 Deselecting their last alias retains independently authorized file choices. The
@@ -1604,9 +1632,7 @@ separates Aliases & Functions from Scripts, and Check reports file conformity.
 Selection keeps one visible safety line: **Script files are saved unencrypted.**
 in Capture; **Restore trusted scripts only. They may run later.** in Rebuild.
 The warning is inside expanded Scripts only. Collapsed Scripts shows the ordinary
-category row; Info retains the full safety explanation. The bulk dialog shows the
-exact reviewed-file count and shortest unambiguous filename suffixes, with
-Aliases only first, explicit Include, and Cancel. Scripts' checkbox/count covers
+category row; Info retains the full safety explanation. The consent dialog lists the reviewed files using their shortest unambiguous filename suffixes. Scripts' checkbox/count covers
 currently eligible files; pending checks and disabled files explain checking, unsupported
 content, failed observation or the need to select a related alias.
 Capture's **Add Script…** action sits left aligned inside expanded Scripts, below
@@ -1617,15 +1643,15 @@ picks can come from different folders. Core qualifies and deduplicates files; ne
 candidates remain unchecked. V5 includes recognized non-executable Shell/Python
 files without changing their original modes. There is no Scan Folder button.
 
-Capture Selection, Confirmation and Result count Aliases & Functions and Scripts
-as independent functional domains through the Core aggregation contract. They keep
-one physical Shell module. Each selected alias definition and each unique selected
-script file contributes one Selected Item, including files referenced by aliases.
+Capture Selection, Confirmation and Result count Aliases & Functions, Scripts and
+Variables & PATH as independent functional domains when they contain selected items. They keep
+one physical Shell module. Each selected definition, declaration, initializer and
+unique script file contributes one Selected Item, including files referenced by aliases.
 Manual/automatic discoveries of the same file count once. Result derives functional
 counts from validated saved-file identities, while physical Bundle and Rebuild/Check
 counts retain their own semantics. A selected file remains one item after its aliases
 are deselected.
-Publication receipt validation uses `shell-state:1` to distinguish typed individual
+Publication receipt validation uses the negotiated typed Shell version to distinguish typed individual
 Script requirements from legacy alias-associated files; counts, prepared identity,
 destination and exact consented file identities must still agree.
 The primary UI shows concise safety text, actionable rejection reasons and statuses.

@@ -21,6 +21,8 @@ The subsequent optimization checkpoint remains **HOSTED NOT YET VERIFIED**.
 
 ## Reports
 
+- [Variables & PATH Native lifecycle](SHELL-VARIABLES-PATH-2026-11-20.md#controlled-real-mac-acceptance) records the accepted mixed B4+B5 real-Mac run, independent Check, repeat Preview and cleanup.
+
 - [Unified Shell B4 — 2026-11-17](SHELL-UNIFIED-B4-2026-11-17.md) — disposable mixed
   Core and real Native → Core Capture/Restore/Verify/Check; visual, real-Mac and
   hosted/release qualification remain separate.

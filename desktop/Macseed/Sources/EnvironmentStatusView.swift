@@ -134,10 +134,13 @@ struct EnvironmentComparisonView: View {
     @ReferenceViewState<Set<String>> private var expandedCategories = []
     private var expandedIDs: Set<String> { categoryExpansion?.wrappedValue ?? expandedCategories }
     static func disclosureIDs(_ result: EnvironmentStatusPresentation) -> Set<String> {
-        Set(visibleSections(result).flatMap(\.entries).flatMap { [$0.id] + $0.children.map(\.id) })
-            .union(result.categories.flatMap { EnvironmentComparisonDomain.shellChildren($0).map(\.id) })
+        Set(visibleSections(result).flatMap(disclosureIDs(in:)))
     }
-    private var categoryIDs: Set<String> { Self.disclosureIDs(result) }
+    static func disclosureIDs(in section: EnvironmentStatusSection) -> Set<String> {
+        Set(section.entries.flatMap { entry in
+            [entry.id] + entry.children.flatMap { [$0.id] + EnvironmentComparisonDomain.shellChildren($0).map(\.id) }
+        })
+    }
     private var treeExpansion: Binding<Set<String>> {
         Binding(get: { expandedIDs }, set: { ids in
             if let categoryExpansion { categoryExpansion.wrappedValue = ids } else { expandedCategories = ids }
@@ -166,9 +169,6 @@ struct EnvironmentComparisonView: View {
             return entries.isEmpty ? nil : .init(id: section.id, entries: entries)
         }
     }
-    static func toggledCategories(_ expanded: Set<String>, ids: Set<String>) -> Set<String> {
-        WorkflowExpansion.toggled(expanded, available: ids)
-    }
     static func summaryOutcomes(_ result: EnvironmentStatusPresentation) -> [ComparisonSummaryOutcome] {
         ComparisonSummaryOutcome.allCases.filter { $0 == .needsAttention ? result.needsAttention : ($0.count(result) ?? 0) > 0 }
     }
@@ -183,28 +183,17 @@ struct EnvironmentComparisonView: View {
             if result.needsAttention || result.counts["extra", default: 0] > 0 || result.counts["unverified", default: 0] > 0 || result.counts["unresolved", default: 0] > 0 {
                 Text(result.message).font(.callout).foregroundStyle(.secondary)
             }
-            HStack {
-                Text("Details by Category").font(.headline).accessibilityAddTraits(.isHeader)
-                Spacer()
-                if !categoryIDs.isEmpty {
-                    Button(categoryIDs.isSubset(of: expandedIDs) ? "Collapse All" : "Expand All") {
-                        let ids = Self.toggledCategories(expandedIDs, ids: categoryIDs)
-                        if let categoryExpansion { categoryExpansion.wrappedValue = ids } else { expandedCategories = ids }
-                    }.buttonStyle(.plain).foregroundStyle(.secondary)
-                }
-            }
-            WorkflowList {
-                ForEach(Self.visibleSections(result)) { section in
-                    WorkspaceSectionHeader(title: section.id)
+            Text("Details by Category").font(.headline).accessibilityAddTraits(.isHeader)
+            let sections = Self.visibleSections(result)
+            WorkflowList(spacing: 12) {
+                ForEach(sections) { section in
+                    WorkspaceSectionHeader.row(controls: AnyView(CaptureExpandButton(
+                        ids: Self.disclosureIDs(in: section), title: section.id, expanded: treeExpansion))) {
+                        WorkspaceSectionHeader(title: section.id)
+                    }
                     VStack(spacing: 0) {
                         ForEach(section.entries) { entry in
-                            EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: result.technicalFacts, coverageHelp: result.coverageHelp, counts: Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, result.categoryCount($0, category: entry.category, children: entry.children)) }), expansion: Binding(
-                                get: { expandedIDs.contains(entry.id) },
-                                set: { value in
-                                    var ids = expandedIDs
-                                    if value { ids.insert(entry.id) } else { ids.remove(entry.id) }
-                                    if let categoryExpansion { categoryExpansion.wrappedValue = ids } else { expandedCategories = ids }
-                                }), childExpansion: settingsExpansion, treeExpansion: treeExpansion,
+                            EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: result.technicalFacts, coverageHelp: result.coverageHelp, counts: Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, result.categoryCount($0, category: entry.category, children: entry.children)) }), expansion: WorkflowExpansion.binding(entry.id, in: treeExpansion), childExpansion: settingsExpansion, treeExpansion: treeExpansion,
                                 categoryCounts: categoryCounts, technicalExpansion: technicalExpansion, secureActions: secureActions)
                             if entry.id != section.entries.last?.id { Divider() }
                         }
@@ -286,13 +275,16 @@ struct EnvironmentComparisonDomain: View {
     var secureActions: AnyView? = nil
     @ReferenceViewState<Bool> private var expanded = false
     static func shellChildren(_ category: DisplayCategory) -> [DisplayCategory] {
-        guard category.id == "shell-zsh", category.items.contains(where: {
+        guard ["shell-zsh", ShellCommandPresentation.commandsID].contains(category.id), category.items.contains(where: {
             $0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-function:") || $0.id.hasPrefix("shell-zsh:shell-script:")
         }) else { return [] }
         let scripts = category.items.filter { $0.id.hasPrefix("shell-zsh:shell-script:") }
-        let aliases = category.items.filter { !$0.id.hasPrefix("shell-zsh:shell-script:") }
+        let environment = category.items.filter { CoreCaptureInventoryRow.Item.isEnvironmentID(String($0.id.dropFirst("shell-zsh:".count))) }
+        let environmentIDs = Set(environment.map(\.id))
+        let aliases = category.items.filter { !$0.id.hasPrefix("shell-zsh:shell-script:") && !environmentIDs.contains($0.id) }
         return [(ShellCommandPresentation.aliasesID, "Aliases & Functions", "terminal", aliases),
-                (ShellCommandPresentation.scriptsID, "Scripts", "applescript", scripts)].compactMap { id, title, symbol, items in
+                (ShellCommandPresentation.scriptsID, "Scripts", "applescript", scripts),
+                (DeveloperSelectionGroup.environmentID, "Variables & PATH", "list.bullet.rectangle", environment)].compactMap { id, title, symbol, items in
             items.isEmpty ? nil : DisplayCategory(id: id, title: title, symbol: symbol, items: items)
         }
     }
@@ -379,7 +371,7 @@ struct EnvironmentComparisonDomain: View {
     private var title: some View {
         HStack(spacing: 12) {
             WorkspaceCategoryIcon(symbol: category.symbol, domainID: category.id)
-            Text(!Self.shellChildren(category).isEmpty ? "Custom Commands" : category.id == "ssh-configuration" ? "SSH Configuration" : DeveloperSelectionGroup.label(category.id, fallback: category.title)).font(.body.weight(.medium))
+            Text(category.id == "shell-zsh" ? category.title : category.id == "ssh-configuration" ? "SSH Configuration" : DeveloperSelectionGroup.label(category.id, fallback: category.title)).font(.body.weight(.medium))
         }.accessibilityElement(children: .combine)
             .accessibilityValue(showsStatus ? "" : EnvironmentComparisonView.visibleCategory(category).comparisonStatusText)
     }

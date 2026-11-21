@@ -115,6 +115,11 @@ struct CaptureCategory: Identifiable {
         }
         return DisplayCategory(id: id, title: title, symbol: symbol, items: items)
     }
+    var customCommands: CaptureCategory {
+        guard row.items.contains(where: { $0.environment != nil }) else { return self }
+        return CaptureCategory(row: .init(domain: id, status: row.status, reason: row.reason, selectionMode: row.selectionMode,
+            items: row.items.filter { $0.environment == nil }, includedSettings: row.includedSettings), shellObservation: shellObservation)
+    }
     var notices: [DisplayItem] {
         guard selectable, let reason = row.reason, !informationalShellCoverage else { return [] }
         return [DisplayItem(id: "category-warning:" + id, title: "Needs Attention", status: .attention,
@@ -269,7 +274,7 @@ enum CaptureSelectionScope: CaseIterable {
         }
     }
     private var parentShellAliases: Set<String> {
-        Set(categories.filter { $0.id == "shell-zsh" && $0.selectable && $0.itemSelectable }.flatMap { $0.row.items.map(\.itemID) })
+        Set(categories.filter { $0.id == "shell-zsh" && $0.itemSelectable }.flatMap { $0.customCommands.row.items.map(\.itemID) })
     }
     var parentShellScripts: [CoreShellScript] {
         shellScriptCandidates.filter { (supportsManualScripts || !Set($0.aliasIDs ?? []).isDisjoint(with: parentShellAliases))
@@ -321,24 +326,29 @@ enum CaptureSelectionScope: CaseIterable {
             }
         }
     }
-    func selectShellParent(included: Bool) {
+    func selectShellParent(included: Bool, includingEnvironment: Bool = false) {
         guard state == .review, !runtime.isActive else { return }
         let scripts = parentShellScripts
         let additions = scripts.filter { !authorizedShellScripts.contains($0.id) }
         if included && !additions.isEmpty {
-            shellParentConsent = ShellParentConsent(aliases: parentShellAliases, candidates: scripts, newScripts: additions)
+            shellParentConsent = ShellParentConsent(aliases: parentShellAliases, candidates: scripts, newScripts: additions,
+                environmentIDs: includingEnvironment ? Set(environmentItems.map(\.itemID)) : nil)
             return
         }
         shellParentConsent = nil
         if !included { authorizedShellScripts = [] }
         selectCategory("shell-zsh", included: included)
+        if includingEnvironment { selectEnvironmentItems(included: included) }
     }
     func resolveShellParent(_ request: ShellParentConsent, choice: ShellParentConsent.Choice) {
         guard shellParentConsent?.id == request.id else { return }
         shellParentConsent = nil
         guard choice != .cancel, state == .review, !runtime.isActive,
-              request.matches(aliases: parentShellAliases, candidates: parentShellScripts) else { return }
+              request.matches(aliases: parentShellAliases, candidates: parentShellScripts),
+              request.environmentIDs.map({ $0 == Set(environmentItems.map(\.itemID)) }) ?? true else { return }
         if request.selectAliases { selectCategory("shell-zsh", included: true) }
+        if request.environmentIDs != nil { selectEnvironmentItems(included: true) }
+        if choice == .aliasesOnly { selectAllShellScripts(included: false) }
         if choice == .includeScripts {
             qualifyShellScripts(Set(request.newScripts.map(\.id)))
         }
@@ -410,7 +420,7 @@ enum CaptureSelectionScope: CaseIterable {
     init(runtime: CoreRuntime, location: CoreLocation? = nil) { self.runtime = runtime; self.location = location }
     var busy: Bool { addingIdentity || inspectingShellScripts || [.scanning, .preparing, .saving].contains(state) }
     var categories: [CaptureCategory] {
-        inventory.filter { $0.domain != "shell-zsh" || supportsManualScripts || ["present", "observation_error"].contains($0.status) }
+        inventory.filter { $0.domain != "shell-zsh" || supportsManualScripts || !environmentNotes.isEmpty || ["present", "observation_error"].contains($0.status) }
             .map { CaptureCategory(row: $0, shellObservation: shellObservation) }
     }
     var macOSSettings: CaptureMacOSSettingsGroup { CaptureMacOSSettingsGroup(categories: categories, selected: selectedCategories) }
@@ -420,18 +430,40 @@ enum CaptureSelectionScope: CaseIterable {
     var selection: CoreCaptureSelection {
         // V1 permits whole item domains. Keep Select All requests compact even
         // for large inventories; partial domains retain their exact item IDs.
-        let explicitShell = shellObservation?.status == .observed
+        let explicitShell = !environmentItems.isEmpty || shellObservation?.status == .observed
             || categories.contains { $0.id == "shell-zsh" && $0.row.items.contains { $0.itemID.hasPrefix("shell-function:") } }
         let wholeItems = Set(categories.filter { $0.itemSelectable && ($0.id != "shell-zsh" || !explicitShell) && selectionState($0) == .all }.map(\.id))
         return CoreCaptureSelection(categories: selectedCategories.union(wholeItems).sorted(),
                                     items: selectedItems.filter { !$0.value.isEmpty && !wholeItems.contains($0.key) }.mapValues { $0.sorted() },
                                     secureIdentities: selectedSecureIdentities.sorted())
     }
+    var environmentItems: [CoreCaptureInventoryRow.Item] {
+        inventory.first { $0.domain == "shell-zsh" && $0.status == "present" && $0.selectionMode == "items" }?.items.filter { $0.environment != nil } ?? []
+    }
+    var environmentSelectedCount: Int { selectedEnvironmentIDs?.count ?? 0 }
+    var environmentSelectionState: SelectionState {
+        SelectionState.summarize(selected: selectedItems["shell-zsh"] ?? [], children: environmentItems.map(\.itemID))
+    }
+    func selectEnvironmentItems(included: Bool) {
+        guard state == .review, !runtime.isActive, runtime.environmentCaptureSupported == true,
+              categories.contains(where: { $0.id == "shell-zsh" && $0.itemSelectable }), !environmentItems.isEmpty else { return }
+        let ids = Set(environmentItems.map(\.itemID))
+        let previous = selectedItems["shell-zsh"] ?? []
+        let updated = included ? previous.union(ids) : previous.subtracting(ids)
+        if updated != previous { shellParentConsent = nil }
+        selectedItems["shell-zsh"] = updated.isEmpty ? nil : updated
+        preparation = nil
+    }
+    @Published private(set) var environmentNotes: [String] = []
+    private var selectedEnvironmentIDs: [String]? {
+        guard runtime.environmentCaptureSupported == true else { return nil }
+        return environmentItems.map(\.itemID).filter { selectedItems["shell-zsh"]?.contains($0) == true }
+    }
     var selectedDomainCount: Int { CoreCaptureCounts.domains(categories: selectedCategories, items: selectedItems, scripts: authorizedShellScripts) }
     var selectedItemCount: Int { selectedItems.values.reduce(0) { $0 + $1.count } + authorizedShellScripts.count }
     var availableAreaCount: Int {
-        categories.filter(\.selectable).count
-            + (!availableShellScripts.isEmpty ? 1 : 0)
+        categories.filter { $0.customCommands.selectable }.count
+            + (environmentItems.isEmpty ? 0 : 1) + (parentShellScripts.isEmpty ? 0 : 1)
     }
     var selectionSummary: String {
         let selected = selectedDomainCount
@@ -530,8 +562,8 @@ enum CaptureSelectionScope: CaseIterable {
                 let aliases = ids.filter { $0.hasPrefix("shell-alias:") }.count
                 let functions = ids.filter { $0.hasPrefix("shell-function:") }.count
                 let definitionCounts = "\(aliases) \(aliases == 1 ? "Alias" : "Aliases") · \(functions) \(functions == 1 ? "Function" : "Functions")"
-                rows.append(CaptureConfirmationArea(id: category.id, title: category.title,
-                    content: category.id == "shell-zsh" && functions > 0 ? definitionCounts : category.itemSelectable ? "\(count)" : "Included",
+                rows.append(CaptureConfirmationArea(id: category.id, title: ids.contains(where: CoreCaptureInventoryRow.Item.isEnvironmentID) ? "Shell" : category.title,
+                    content: category.id == "shell-zsh" && functions > 0 && !ids.contains(where: CoreCaptureInventoryRow.Item.isEnvironmentID) ? definitionCounts : category.itemSelectable ? "\(count)" : "Included",
                     requiresAttention: !category.notices.isEmpty))
             }
         }
@@ -564,15 +596,26 @@ enum CaptureSelectionScope: CaseIterable {
         if !selectable.isEmpty && selectable.allSatisfy({ selectionState($0) == .all }) { return .all }
         return selectable.contains { selectionState($0) != .none } ? .mixed : .none
     }
+    func selectedDomainCount(for categories: [CaptureCategory]) -> Int {
+        let ids = Set(categories.map(\.id))
+        return CoreCaptureCounts.domains(categories: selectedCategories.intersection(ids),
+            items: selectedItems.filter { ids.contains($0.key) }, scripts: ids.contains("shell-zsh") ? authorizedShellScripts : [])
+    }
     func selectionSummary(for categories: [CaptureCategory]) -> String {
-        let domains = categories.filter { selectionState($0) != .none }.count
-        let items = categories.reduce(0) { $0 + (selectedItems[$1.id]?.count ?? 0) }
+        let domains = selectedDomainCount(for: categories)
+        let scripts = categories.contains { $0.id == "shell-zsh" } ? authorizedShellScripts.count : 0
+        let items = categories.reduce(scripts) { $0 + (selectedItems[$1.id]?.count ?? 0) }
         return "\(domains) \(domains == 1 ? "domain" : "domains") · \(items) \(items == 1 ? "item" : "items") selected"
     }
     func selectCategory(_ domain: String, included: Bool) {
         guard state == .review, !runtime.isActive, let category = categories.first(where: { $0.id == domain }), category.selectable else { return }
         preparation = nil
-        if category.itemSelectable { selectedItems[domain] = included ? Set(category.row.items.map(\.itemID)) : nil }
+        if category.itemSelectable {
+            let children = Set(category.row.items.filter { $0.environment == nil }.map(\.itemID))
+            let previous = selectedItems[domain] ?? []
+            let updated = included ? previous.union(children) : previous.subtracting(children)
+            selectedItems[domain] = updated.isEmpty ? nil : updated
+        }
         else if included { selectedCategories.insert(domain) } else { selectedCategories.remove(domain) }
         pruneShellScripts()
     }
@@ -597,11 +640,11 @@ enum CaptureSelectionScope: CaseIterable {
         shellScriptCandidates = []; authorizedShellScripts = []; shellParentConsent = nil
         manualShellScriptPaths = [:]
         shellScriptInspections = [:]; shellInspectionError = nil; pendingShellScripts = []; shellScriptPolicy = nil
-        inventory = []; shellObservation = nil; selectedCategories = []; selectedItems = [:]; preparation = nil; destination = nil
+        inventory = []; shellObservation = nil; environmentNotes = []; selectedCategories = []; selectedItems = [:]; preparation = nil; destination = nil
         secureInventory = .unavailable; selectedSecureIdentities = []
         externalSources = [:]; externalCandidates = [:]; identityError = nil
         replacementSHA256 = nil; publication = nil; resultNotices = []; publicationEvidence = .notOccurred; publicationMayHaveStarted = false; failure = nil
-        run(CoreRequest(.capturePrepare(selection: nil)), state: .scanning, expected: nil)
+        run(CoreRequest(.capturePrepare(selection: nil), shellPlaintextIDs: selectedEnvironmentIDs), state: .scanning, expected: nil)
     }
     func prepare(destination: URL, replacementConfirmed: Bool = false) {
         guard canCreate else { return }
@@ -624,7 +667,7 @@ enum CaptureSelectionScope: CaseIterable {
         pruneShellScripts()
         run(CoreRequest(.capturePrepare(selection: expected), externalIdentityPaths: selectedExternalPaths,
             shellScriptSelection: shellScriptSelection, shellScriptPolicy: shellScriptPolicy,
-            shellScriptPaths: manualScriptPaths(for: authorizedShellScripts)), state: .preparing, expected: expected)
+            shellScriptPaths: manualScriptPaths(for: authorizedShellScripts), shellPlaintextIDs: selectedEnvironmentIDs), state: .preparing, expected: expected)
     }
     func editSelection() {
         guard state == .confirmation || canReviewSelection, !runtime.isActive else { return }
@@ -641,7 +684,7 @@ enum CaptureSelectionScope: CaseIterable {
         }
         publicationEvidence = .unknown; publicationMayHaveStarted = false; failure = nil; publication = nil
         run(CoreRequest(.captureExecute(selection: selection, destination: destination.path, preparedID: preparation.preparedCaptureID, replacementSHA256: replacementSHA256), externalIdentityPaths: selectedExternalPaths, shellScriptIDs: authorizedShellScripts.sorted(), shellScriptSelection: shellScriptSelection, shellScriptPolicy: shellScriptPolicy,
-            shellScriptPaths: manualScriptPaths(for: authorizedShellScripts)), state: .saving, expected: selection)
+            shellScriptPaths: manualScriptPaths(for: authorizedShellScripts), shellPlaintextIDs: selectedEnvironmentIDs), state: .saving, expected: selection)
     }
     private func run(_ request: CoreRequest, state next: CaptureFlowState, expected: CoreCaptureSelection?) {
         savingAttempted = next == .saving
@@ -669,6 +712,7 @@ enum CaptureSelectionScope: CaseIterable {
                         let prepared = try result.decodeData(CoreCapturePreparation.self)
                         try prepared.validate(expected: expected, expectedScripts: next == .scanning ? nil : shellScriptSelection)
                         inventory = prepared.inventory
+                        environmentNotes = prepared.shellEnvironment?.explanations ?? []
                         shellObservation = prepared.shellFunctions
                         let remaining = externalCandidates.values.filter { candidate in !prepared.secureIdentities.items.contains { $0.id == candidate.id } }
                         secureInventory = remaining.isEmpty ? prepared.secureIdentities : .init(status: "present", reason: nil,

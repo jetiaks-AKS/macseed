@@ -196,8 +196,8 @@ struct RestoreTaskPresentation {
         guard !selected.isEmpty, selected.isSuperset(of: plan.selection.items["shell-zsh"] ?? []),
               selected == Set(facts.compactMap { $0["item_id"]?.string }), facts.count == selected.count,
               facts.allSatisfy({ fact in
-                  guard let kind = fact["item_id"]?.string?.split(separator: ":").first,
-                        let expected = predicates[String(kind)] else { return false }
+                  guard let id = fact["item_id"]?.string, let kind = id.split(separator: ":").first,
+                        let expected = predicates[String(kind)] ?? CoreCaptureInventoryRow.Item.environmentPredicate(id) else { return false }
                   return fact["predicate"]?.string == expected && fact["support"]?.string == "supported"
                       && ["verified", "mismatch"].contains(fact["conformity"]?.string ?? "")
               }) else { return nil }
@@ -359,7 +359,9 @@ struct RestoreTaskPresentation {
                 if conformities.contains("unsupported") { labels.append("Unsupported") }
                 if conformities.contains("unresolved") { labels.append("Unresolved") }
                 if conformities.contains("unverified") { labels.append("Unverified") }
-                if entry?.action != "restart_process" && !predicates.isEmpty && conformities == ["verified"] { labels.append("Verified") }
+                let environmentPredicate = entry.flatMap { $0.domain == "shell-zsh" ? CoreCaptureInventoryRow.Item.environmentPredicate($0.itemID) : nil }
+                let hasExpectedPredicate = environmentPredicate.map { predicates[$0]?["support"]?.string == "supported" } ?? true
+                if entry?.action != "restart_process" && !predicates.isEmpty && conformities == ["verified"] && hasExpectedPredicate { labels.append("Verified") }
                 if labels.isEmpty { labels = ["Unverified"] }
                 let technical = ([operation, activity?.data].compactMap { $0 } + Array(predicates.values))
                     .map { row in ["domain", "item_id", "action", "state", "outcome", "predicate", "conformity", "reason", "record_id"].compactMap { key in row[key]?.string.map { key + ": " + $0 } }.joined(separator: " · ") }
@@ -394,12 +396,18 @@ struct RestoreTaskPresentation {
                     sourceDomain: entry?.domain, sourceItemID: entry?.itemID, assistedAppStore: assisted)
             }
             if items.isEmpty { continue }
-            var domain = TaskDomainPresentation(id: domainID, title: category.title,
+            let title = executing && operationProgress && result == nil
+                ? active?.title ?? RestoreProgressRow.title(for: category, plan: plan) : category.title
+            var domain = TaskDomainPresentation(id: domainID, title: title,
                 symbol: Self.symbol(category.id), items: items, activityState: operationProgress ? Self.executionState(items, activity: result == nil ? activityState : nil) : activityState, previewOnly: !executing && result == nil)
             if domainScope.contains("shell-zsh"), plan.plan.contains(where: {
                 $0.domain == "shell-zsh" && $0.itemID == "scope" && $0.action == "none"
                     && $0.disposition == "information" && $0.reason == "shell_activation_unknown"
-            }) { domain.scopeInformation = ShellCommandPresentation.activationSummary }
+            }) {
+                let members = plan.plan.filter { $0.domain == "shell-zsh" && $0.itemID != "scope" }
+                domain.scopeInformation = !members.isEmpty && members.allSatisfy { $0.disposition == "satisfied" }
+                    ? ShellCommandPresentation.activationSummary : ShellCommandPresentation.activationScope
+            }
             if domainID == "ssh-configuration" {
                 if !executing && result == nil && !operationProgress, let detail = plan.effectiveSSHHosts,
                    let requirement = items.first(where: { $0.sourceDomain == domainID && $0.sourceItemID == detail.planItemID }),
@@ -625,6 +633,10 @@ struct RestoreTaskPresentation {
                 return operations.contains { $0["domain"]?.string == entry.domain && $0["item_id"]?.string == entry.itemID && $0["action"]?.string == entry.action && $0["outcome"]?.string == "success" }
             }
             let observed = observations.filter { $0["domain"]?.string == entry.domain && $0["item_id"]?.string == entry.itemID }
+            if entry.domain == "shell-zsh", let predicate = CoreCaptureInventoryRow.Item.environmentPredicate(entry.itemID) {
+                return observed.count == 1 && observed[0]["predicate"]?.string == predicate && observed[0]["support"]?.string == "supported"
+                    && observed[0]["conformity"]?.string == "verified"
+            }
             return !observed.isEmpty && (!entry.domain.hasPrefix("macos-") || observed.contains { $0["predicate"]?.string == "stored_preference" }) && observed.allSatisfy { $0["conformity"]?.string == "verified" }
         }
     }

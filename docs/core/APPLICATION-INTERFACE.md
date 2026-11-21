@@ -188,6 +188,29 @@ Bundle packing uses that freshly validated effective scope without a second
 identity lookup. This adds no archive fields and does not rewrite existing Bundles.
 `stale_prepared_capture` requires fresh preparation and confirmation.
 
+The optional `shell_environment_capture` feature supports `shell_environment: true`
+in Capture Prepare/Execute. Each selected B5 item requires its ID in
+`shell_plaintext_ids` on both operations. Whole-category selection grants no B5
+consent. Inventory items carry Core-generated `environment` explanation, context,
+origin and `capture_only`. Scope exclusions use sanitized reasons. Bundle inspection
+returns `required_features.shell-state = 2` and `restore_supported = true` for
+validated v2 inputs on capable Core. Older capture-only capability responses remain
+readable. The flag describes protocol support. Preview qualifies each selected
+target operation. Verify and Comparison identify `variable_declaration`,
+`path_operation` and `initializer_declaration` by the saved opaque item ID.
+For Variables & PATH, the Restore selection inventory also carries the saved
+declaration's sanitized `environment` detail (explanation, startup context and
+origin), using the same projection as Capture. This detail never authorizes a
+write. Public evidence contains sanitized labels and outcomes only.
+For a narrowed `shell-state` v2 selection, `shell_skipped_items` contains at
+most 512 distinct selected declaration IDs across aliases (at most 256),
+functions, variables, PATH operations and initializers. Each must identify exactly
+one `shell-zsh` plan row with action `none` and disposition `blocked`, `conflict`
+or `unknown`. Core independently qualifies remaining writes and binds the skip
+set to Prepare. Execute rechecks the set and Verify reports skipped requirements.
+Up to 128 separately selected Scripts retain their own plan rows and consent.
+They do not add capacity to this declaration skip set.
+
 `shell_functions_capture` version 1 advertises explicit Functions Capture on macOS
 14.4+ with a trusted prepared parser and positively established launch enforcement. Scan
 uses `capture_prepare` with null selection. Functions keep B1
@@ -351,8 +374,8 @@ Plan rows contain `domain`, `item_id`, `action`, `disposition`, nullable `reason
 repository rows may have a safe `display_name`. Dispositions are `satisfied`,
 `planned`, `blocked`, `conflict`, `warning`, `unknown`, `pending_unlock`, and the
 bounded informational case: `shell-zsh / scope / none / information /
-shell_activation_unknown`. It retains runtime-activation uncertainty when all
-selected typed Shell requirements are satisfied, without an additional requirement,
+shell_activation_unknown`. It retains runtime-activation uncertainty independently
+of selected item outcomes, without an additional requirement,
 planned change, warning or readiness condition. Check retains this limitation as
 `resolved / partial` scope coverage with `shell_activation_unknown`, severity `info`,
 phase `scope`; unresolved requirements and other diagnostics keep their usual counts.
@@ -555,7 +578,8 @@ paths and observation IDs with the reviewed Bundle candidates before accepting t
 Preview; changed or missing evidence clears authorization and requires reopening
 the Bundle. `shell_scripts` continues to describe actual missing-file writes only.
 V5 Restore Prepare additionally returns `shell_skipped_items`, the unique selected
-alias/file identities whose rejected groups produce no writes. Each identity must
+alias/file identities whose rejected groups produce no writes (up to 256 aliases
+and 128 Script candidates, 384 total). Each identity must
 correspond to exactly one Shell plan row with no action and a blocked, conflict or
 unknown disposition. This decision is bound into `prepared_plan_id`, recomputed at
 Execute and consumed by native gating; a generic warning alone never permits a
@@ -612,23 +636,28 @@ existing TMPDIR, removes those fields from the wire request and supplies
 directory. It has `{version: 5, operation_id, parameters}`; only `scripts`,
 `shell_script_paths`, `shell_script_ids`, `shell_script_selection` and `shell_items`
 are permitted. `shell_items` supplies the otherwise absent `selection.items.shell-zsh`
-subset, bounded to 384 alias/file identities. Duplicate fields, conflicting inline
+subset. The legacy bound is 384 alias/file identities. Restore Prepare, Execute
+and Secure Restore Compare can carry a typed Shell subset of up to 512 declarations
+(including at most 256 aliases) plus 128 Scripts. Larger-than-legacy subsets require
+distinct canonical typed IDs and the same per-kind limits as the saved inventory.
+Bundle membership, per-file consent and the 256 KiB envelope still apply.
+Duplicate fields, conflicting inline
 fields, stale operation/hash, unsafe files, unknown fields and oversized control
 data fail closed. Expanded fields pass the ordinary operation validators again.
 The manifest cannot expand unrelated parameters or transport file content. Native
 cleans it with the existing operation directory on completion/cancellation.
 
-Core's Capture summary counts selected Aliases & Functions and Scripts as separate
-functional domains, without another Shell parent contribution or changing
-`shell-zsh`. Native's protocol aggregation applies that contract in live Selection;
-Confirmation validates Core preparation; Result projects functional counts from
-Bundle inspection's existing `shell_script_candidates` identities/alias associations
-and physical `selected_item_counts`, then validates both against preparation.
-Capture Selected Items counts alias definitions and unique selected script files
-separately, including alias-linked files. Bundle/Restore physical counts and Check
-evidence semantics are unchanged. Thus,
-with 11 other selected domains, the four alias/script states produce 13/12/12/11
-domains; visibility alone contributes nothing.
+Core's Capture summary counts Aliases & Functions, Scripts and Variables & PATH
+once each when selected. All three use the physical `shell-zsh` domain.
+Native applies that contract in live Selection and validates Core preparation for
+Confirmation. Result projects functional counts from
+validated Bundle inspection. For `shell-state:2`, inspection returns
+`shell_functional_counts` with saved item counts for `aliases_functions`, `scripts`
+and `variables_path`. Native checks all three against prepared item IDs and file consent.
+Earlier formats retain the existing `shell_script_candidates` and `selected_item_counts` projection.
+Each selected declaration and each unique selected script file contributes one item,
+including files referenced by aliases. With 11 other selected domains, selecting
+all three Shell groups gives 14 domains. Clearing any one group gives 13.
 
 Optional `shell_script_selection` is a unique list of at most 128 valid script IDs
 (legacy Capture policies retain 16),

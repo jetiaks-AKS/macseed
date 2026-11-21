@@ -11,6 +11,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Variables & PATH recovery for qualified Zsh declarations, ordered PATH changes
+  and supported environment initializers. Rebuild preserves target customizations,
+  and Check reports each selected declaration independently. The native app shows
+  these requirements separately from Custom Commands in Selection, Preview and Result.
+
 * A pinned native Zsh structural parser foundation with exact source spans,
   bounded resource use and isolated process supervision. The helper is bundled
   for development; platform and release qualification remain open.
@@ -76,7 +81,7 @@ The format is based on the principles of **Keep a Changelog**.
   coverage and broader hosted/release qualification remain separate.
   Historical files remain under Settings; partial
   coverage explanations distinguish matching aliases from unhandled Shell state.
-  Variables & PATH, broader Settings and Plugins & Themes remain planned.
+  Broader Shell Settings and Plugins & Themes remain planned.
 
 * SSH Configuration in Check and Rebuild Preview shows qualified saved Host details
   directly inside the existing category. Check and Preview badges and summary cards
