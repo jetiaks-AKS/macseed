@@ -143,7 +143,21 @@ import CryptoKit
                      "Alias, independently restored file and retained Shell coverage")
         precondition(tasks.automaticDomains[0].items.filter { $0.item.title == "Alias: platform" }.count == 1)
         precondition(tasks.automaticDomains[0].items.first { $0.item.title == "Alias: platform" }!.resultLabels.contains("Verified"))
-        precondition(RestoreExecutionCategories.disclosureIDs(tasks.automaticDomains) == ["shell-zsh"], "Progress/Result keep their flat execution category")
+        let progressRows = RestoreExecutionCategories.orderedRows(tasks.automaticDomains)
+        precondition(progressRows.map(\.id) == ["shell-zsh"], "Progress keeps one physical Shell execution row")
+        let resultDomains = RestoreResultDetails.domains(tasks.automaticDomains, result: model.executionResult)
+        precondition(resultDomains.map(\.id) == ["shell-zsh"])
+        let shellResult = resultDomains[0]
+        let commandGroups = shellResult.rebuildResultChildren
+        precondition(commandGroups.map(\.id) == [ShellCommandPresentation.commandsID])
+        let subgroups = commandGroups[0].rebuildResultChildren
+        precondition(subgroups.map(\.id) == [ShellCommandPresentation.aliasesID, ShellCommandPresentation.scriptsID])
+        let scriptID = "shell-script:" + script.id
+        precondition(subgroups[0].items.map(\.sourceItemID) == [alias] && subgroups[1].items.map(\.sourceItemID) == [scriptID])
+        precondition(subgroups.flatMap(\.items).allSatisfy(RestoreResultDetails.verified))
+        precondition(shellResult.resultVisibleItems.compactMap(\.sourceItemID).sorted() == [alias, scriptID, "scope"].sorted())
+        precondition(RestoreExecutionCategories.disclosureIDs(resultDomains) == ["shell-zsh", ShellCommandPresentation.commandsID,
+            ShellCommandPresentation.aliasesID, ShellCommandPresentation.scriptsID])
         let status = EnvironmentStatusModel(runtime: runtime, location: location)
         func check(_ matching: Int, _ differing: Int) async {
             status.selectBundle(archive); status.compare(); await status.waitForCompletion()
