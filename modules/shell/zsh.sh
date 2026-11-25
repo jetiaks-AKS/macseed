@@ -52,7 +52,7 @@ zsh_snapshot_validate() {
     total="${total//[[:space:]]/}"
     [[ "$total" =~ ^[0-9]+$ && $total -le 1048576 ]] || return 2
 
-    if [[ "$(head -n 1 "$file")" == MBT-SHELL-STATE-[12] ]]; then
+    if [[ "$(head -n 1 "$file")" == MBT-SHELL-STATE-[123] ]]; then
         ZSH_SNAPSHOT_FORMAT=functions
         zsh_selected_state validate "$file" || return 2
         ZSH_SNAPSHOT_STATUS=eligible
@@ -547,6 +547,8 @@ zsh_alias_verify() {
             verification_result shell-zsh "$identity" variable_declaration "$result" "$code" "$kind"
         elif [[ "$identity" == shell-path-operation:* ]]; then
             verification_result shell-zsh "$identity" path_operation "$result" "$code" "$kind"
+        elif [[ "$identity" == shell-setting:* ]]; then
+            verification_result shell-zsh "$identity" setting_declaration "$result" "$code" "$kind"
         elif [[ "$identity" == shell-initializer:* ]]; then
             verification_result shell-zsh "$identity" initializer_declaration "$result" "$code" "$kind"
         elif [[ "$identity" == shell-script:* ]]; then

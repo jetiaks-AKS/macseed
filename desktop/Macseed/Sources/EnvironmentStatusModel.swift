@@ -179,7 +179,9 @@ struct EnvironmentStatusPresentation {
                 }
                 if let label = result.referencePresentation?.shellEnvironmentLabels?[identity],
                    result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity &&
-                       ["variable_declaration", "path_operation", "initializer_declaration"].contains($0.predicate ?? "") }) { return label }
+                       CoreCaptureInventoryRow.Item.environmentPredicate(identity) == $0.predicate }) {
+                    return ShellSettingPresentation(id: identity, label: label)?.title ?? label
+                }
                 if let label = result.referencePresentation?.shellAliasLabels?[identity],
                    result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity && ["alias_definition", "alias_recovery"].contains($0.predicate ?? "") }) { return ShellDefinitionPresentation.title(domain: domain, id: identity, name: label) }
                 if let label = result.referencePresentation?.shellFunctionLabels?[identity],
@@ -291,10 +293,15 @@ struct EnvironmentStatusPresentation {
                 let scripts = facts.filter { $0.itemID.hasPrefix("shell-script:") }
                 let environment = facts.filter { CoreCaptureInventoryRow.Item.isEnvironmentID($0.itemID) }
                 if !environment.isEmpty {
-                    let category = definitions.isEmpty && scripts.isEmpty ? "shell-zsh" : DeveloperSelectionGroup.environmentID
-                    coverageHelp[category] = environment.allSatisfy { $0.comparisonKind == "matching" }
-                        ? "The saved declarations and required prerequisites match. Dynamic Shell startup was not executed."
-                        : ShellCommandPresentation.activationScope
+                    let settings = environment.filter { CoreCaptureInventoryRow.Item.isSettingID($0.itemID) }
+                    let variables = environment.filter { !CoreCaptureInventoryRow.Item.isSettingID($0.itemID) }
+                    let single = definitions.isEmpty && scripts.isEmpty && (settings.isEmpty || variables.isEmpty)
+                    for (id, items) in [(DeveloperSelectionGroup.settingsID, settings),
+                                        (DeveloperSelectionGroup.environmentID, variables)] where !items.isEmpty {
+                        coverageHelp[single ? "shell-zsh" : id] = items.allSatisfy { $0.comparisonKind == "matching" }
+                            ? "The saved declarations and required prerequisites match. Dynamic Shell startup was not executed."
+                            : ShellCommandPresentation.activationScope
+                    }
                 }
                 if !definitions.isEmpty || !scripts.isEmpty {
                     let category = definitions.isEmpty ? ShellCommandPresentation.scriptsID : ShellCommandPresentation.aliasesID
@@ -500,13 +507,25 @@ struct EnvironmentStatusPresentation {
                   let index = grouped["shell-zsh"]?.firstIndex(where: { $0.id == logicalID("shell-zsh", identity) }) else { continue }
             grouped["shell-zsh"]![index].pathHelp = "~/" + path
         }
+        if var shell = grouped["shell-zsh"], let labels = result.referencePresentation?.shellEnvironmentLabels {
+            let settings = result.records.verificationRecords.filter { $0.domain == "shell-zsh" && $0.predicate == "setting_declaration" &&
+                CoreCaptureInventoryRow.Item.isSettingID($0.itemID) }
+            let groups = settings.reduce(into: [String: ShellSettingGroup]()) { groups, record in
+                groups[logicalID("shell-zsh", record.itemID)] = labels[record.itemID].flatMap(ShellSettingGroup.init(referenceLabel:))
+            }
+            for index in shell.indices { shell[index].shellSettingGroup = groups[shell[index].id] }
+            grouped["shell-zsh"] = shell
+        }
         categories = order.map { domain in
             let legacyShell = domain == "shell-zsh" && result.records.verificationRecords.contains { $0.domain == domain && $0.predicate == "file_content" }
             let scriptShell = domain == "shell-zsh" && result.records.verificationRecords.contains { $0.domain == domain && ["script_file", "alias_definition", "alias_recovery", "function_definition"].contains($0.predicate ?? "") }
             let environment = domain == "shell-zsh" && result.records.verificationRecords.contains { $0.domain == domain && CoreCaptureInventoryRow.Item.isEnvironmentID($0.itemID) }
-            let shellTitle = environment ? (scriptShell ? "Shell" : "Variables & PATH") : nil
+            let declarations = result.records.verificationRecords.filter { $0.domain == domain && CoreCaptureInventoryRow.Item.isEnvironmentID($0.itemID) }
+            let settings = declarations.filter { CoreCaptureInventoryRow.Item.isSettingID($0.itemID) }
+            let mixed = scriptShell || (!settings.isEmpty && settings.count < declarations.count)
+            let shellTitle = environment ? (mixed ? "Shell" : (settings.isEmpty ? "Variables & PATH" : DeveloperSelectionGroup.settingsTitle)) : nil
             // Keep Check's existing single category, with a title that also covers files.
-            return DisplayCategory(id: domain, title: shellTitle ?? DeveloperSelectionGroup.label(domain, fallback: legacyShell ? "Settings" : scriptShell ? "Custom Commands" : names[domain]?.0 ?? domain), symbol: names[domain]?.1 ?? "folder", items: ShellDefinitionPresentation.ordered(grouped[domain]!, domain: domain, id: { $0.id }, name: { $0.title }))
+            return DisplayCategory(id: domain, title: shellTitle ?? DeveloperSelectionGroup.label(domain, fallback: legacyShell ? DeveloperSelectionGroup.settingsTitle : scriptShell ? "Custom Commands" : names[domain]?.0 ?? domain), symbol: names[domain]?.1 ?? "folder", items: ShellDefinitionPresentation.ordered(grouped[domain]!, domain: domain, id: { $0.id }, name: { $0.title }))
         }
         sections = EnvironmentStatusSection.project(categories)
         let independentUnverified = result.comparisonRecords.contains { $0.comparisonKind == "unverified" && !dependentRepositoryRecords.contains($0.recordID) }
@@ -611,7 +630,9 @@ struct EnvironmentStatusSection: Identifiable {
                 return [DisplayCategory(id: ShellCommandPresentation.commandsID, title: "Custom Commands", symbol: "terminal",
                                         items: member.items.filter { !ids.contains($0.id) }),
                         DisplayCategory(id: DeveloperSelectionGroup.environmentID, title: "Variables & PATH", symbol: "list.bullet.rectangle",
-                                        items: environment)]
+                                        items: environment.filter { !$0.id.hasPrefix("shell-zsh:shell-setting:") }),
+                        DisplayCategory(id: DeveloperSelectionGroup.settingsID, title: DeveloperSelectionGroup.settingsTitle, symbol: "slider.horizontal.3",
+                                        items: environment.filter { $0.id.hasPrefix("shell-zsh:shell-setting:") })].filter { !$0.items.isEmpty }
             }
             return Entry(category: DisplayCategory(id: id, title: title, symbol: symbol,
                 items: children.flatMap(\.items)), children: children)

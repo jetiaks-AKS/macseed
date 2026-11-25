@@ -680,7 +680,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             summary['selected_item_counts']['shell-zsh'] = len(requested_selection['items']['shell-zsh'])
         if not requirements['ready'] or summary['error_count']:
             for row in records:
-                if row['domain'] == 'shell-zsh' and row['item_id'].startswith(('shell-alias:', 'shell-script:', 'shell-function:', 'shell-variable:', 'shell-path-operation:', 'shell-initializer:')) and row['disposition'] == 'planned':
+                if row['domain'] == 'shell-zsh' and row['item_id'].startswith(('shell-alias:', 'shell-script:', 'shell-function:', 'shell-variable:', 'shell-path-operation:', 'shell-initializer:', 'shell-setting:')) and row['disposition'] == 'planned':
                     row.update(action='none', disposition='blocked', reason='prerequisite_unmet')
             summary['has_executable_changes'] = any(row['disposition'] == 'planned' for row in records) or include_secure
         dependencies = ((ssh_resolution.dependencies.projection(resolved['dependencies']), resolved['dependency_digest'])
@@ -1517,7 +1517,7 @@ def environment_compare(operation_id, parameters):
                         environment_labels = bundle.shell_state_contract().environment.requirement_labels(typed_functions)
                         if environment_labels:
                             presentation['shell_environment_labels'] = {i: environment_labels[i] for i, p in owners
-                                if i in environment_labels and p in ('variable_declaration', 'path_operation', 'initializer_declaration')}
+                                if i in environment_labels and p in ('variable_declaration', 'path_operation', 'initializer_declaration', 'setting_declaration')}
                         for kind, predicate in (('alias', 'alias_definition'), ('function', 'function_definition'), ('script', 'script_file')):
                             presentation['shell_' + kind + '_labels'] = {row['id']: row['key'] for row in typed_functions._value['items']
                                 if row['kind'] == kind and (row['id'], predicate) in owners}
@@ -1649,14 +1649,16 @@ def dispatch(version, channel=None):
             parameters = value['parameters']
             expected = ({'external_identities'} if operation == 'capture_identity_inspect' else
                         {'selection'} if operation == 'capture_prepare' else {'selection', 'destination', 'expected_prepared_capture_id'})
-            optional = {'external_identities'} | ({'shell_script_selection', 'shell_script_policy', 'shell_script_paths', 'shell_environment', 'shell_plaintext_ids'} if operation != 'capture_identity_inspect' else set()) | ({'replacement_sha256', 'shell_script_ids'} if operation == 'capture_execute' else set())
+            optional = {'external_identities'} | ({'shell_script_selection', 'shell_script_policy', 'shell_script_paths', 'shell_environment', 'shell_plaintext_ids', 'shell_settings'} if operation != 'capture_identity_inspect' else set()) | ({'replacement_sha256', 'shell_script_ids'} if operation == 'capture_execute' else set())
             replacement = 'replacement_sha256' in parameters
             if 'shell_environment' in parameters and parameters['shell_environment'] is not True:
                 raise ValueError('invalid shell capability')
+            if 'shell_settings' in parameters and (parameters['shell_settings'] is not True or not parameters.get('shell_environment')):
+                raise ValueError('invalid Shell Settings capability')
             if 'shell_plaintext_ids' in parameters:
                 ids = parameters['shell_plaintext_ids']
                 if (not parameters.get('shell_environment') or type(ids) is not list or len(ids) > 512
-                        or any(type(i) is not str or not re.fullmatch(r'shell-(?:variable|path-operation|initializer):[0-9a-f]{64}', i) for i in ids)
+                        or any(type(i) is not str or not re.fullmatch(r'shell-(?:variable|path-operation|initializer|setting):[0-9a-f]{64}', i) for i in ids)
                         or len(set(ids)) != len(ids)):
                     raise ValueError('invalid shell selection')
             if 'shell_script_policy' in parameters and parameters['shell_script_policy'] not in ('opaque-file-v4', 'opaque-file-v5'):
@@ -1852,6 +1854,7 @@ def dispatch(version, channel=None):
         }
         result['features']['shell_script_transfer'] = dict(version=5, policy='opaque-file-v5', legacy_policies=['opaque-file-v4'], inspection='capture_script_inspect', max_files=128, max_file_bytes=1048576, max_content_bytes=16777216, max_manifest_bytes=262144, request_manifest='shell-scripts-request.json')
         result['features']['secure_check'] = dict(version=1, inventory='secure_check_inventory', compare='secure_check_compare', selection_version=2, max_items=32, read_only=True)
+        result['features']['shell_settings'] = dict(version=1, required_feature={'shell-state': 3}, restore_supported=True)
         result['features']['shell_environment_capture'] = dict(version=2, restore_supported=True, explicit_plaintext=True)
         result['features']['shell_functions_capture'] = dict(version=1, required_feature={'shell-state': 1},
             minimum_macos='14.4', explicit_items=True, mixed_legacy_selection=True, restore_supported=True)

@@ -2,7 +2,10 @@
 import ast
 import re
 
-KINDS = ('variable', 'path-operation', 'initializer')
+VARIABLE_KINDS = ('variable', 'path-operation', 'initializer')
+KINDS = (*VARIABLE_KINDS, 'setting')
+OPTIONS = {'AUTO_CD', 'BEEP', 'HIST_IGNORE_DUPS', 'HIST_IGNORE_SPACE', 'HIST_REDUCE_BLANKS'}
+HISTORY = {'HISTSIZE', 'SAVEHIST', 'HISTFILE'}
 NAME = r'[A-Za-z_][A-Za-z_0-9]{0,63}'
 PRIVATE = re.compile(r'(?i)token|passw(?:or)?d|passwd|secret|credential|api.?key|access.?key|private.?key|session.?id|bearer|authorization|://[^/\s]*@|-----BEGIN|(?:sk-|gh[pousr]_|github_pat_|xox[baprs]-|AKIA|ASIA|eyJ)[A-Za-z0-9_-]{5,}|[a-zA-Z0-9_=-]{28,}')
 RESERVED = {'HOME', 'ZDOTDIR', 'IFS', 'ENV', 'BASH_ENV', 'FPATH', 'fpath', 'LD_PRELOAD', 'PS1', 'PROMPT', 'RPS1', 'RANDOM', 'SECONDS', 'commands', 'functions'}
@@ -42,14 +45,22 @@ class Excluded(ValueError):
 
 def control_parameter(name):
     """Bindings with executable, framework, prompt or special Zsh ownership."""
-    return (name in SHELL_PARAMETERS or name in FRAMEWORK_PARAMETERS or name in (RESERVED - {'HOME'}) or
-            name in {'ZSH', 'ENV', 'module_path', 'MODULE_PATH', 'functions_source', 'options',
+    return (shell_control_parameter(name) or name in FRAMEWORK_PARAMETERS or
+            name in {'ZSH', 'RUBYOPT', 'PERL5OPT', 'PYTHONSTARTUP', 'NODE_OPTIONS', 'GIT_SSH_COMMAND'})
+
+
+def shell_control_parameter(name):
+    # Framework-owned inputs can share a reserved prefix. Their consumers
+    # are still runtime boundaries in control_parameter().
+    if name in FRAMEWORK_PARAMETERS:
+        return False
+    return (name in SHELL_PARAMETERS or name in (RESERVED - {'HOME'}) or
+            name in {'ENV', 'module_path', 'MODULE_PATH', 'functions_source', 'options',
                      'aliases', 'galiases', 'saliases', 'parameters', 'builtins', 'dis_functions',
                      'termcap', 'terminfo', 'history', 'HISTFILE', 'histchars', 'PS4', 'PS2',
                      'PS3', 'RPROMPT', 'SPROMPT', 'RPS2', 'PROMPT2', 'PROMPT3', 'PROMPT4',
                      'PERIOD', 'TMOUT', 'ZLE_RPROMPT_INDENT', 'WATCH', 'watch', 'cdpath',
-                     'CDPATH', 'FPATH', 'MAILPATH', 'mailpath', 'MANPATH', 'manpath',
-                     'RUBYOPT', 'PERL5OPT', 'PYTHONSTARTUP', 'NODE_OPTIONS', 'GIT_SSH_COMMAND'} or
+                     'CDPATH', 'FPATH', 'MAILPATH', 'mailpath', 'MANPATH', 'manpath'} or
             name.endswith('_functions') or name.startswith(('DYLD_', 'LD_', 'ZSH_', 'PROMPT_', 'TRAP')))
 
 
@@ -220,12 +231,114 @@ def declaration_operands(text):
     return chunks
 
 
-def classify(text):
+def setting_parameters(writes, reads):
+    """Separate lexical Setting dependencies from shell-owned control state."""
+    structural = (SHELL_PARAMETERS | RESERVED | {'options', 'aliases', 'galiases', 'saliases',
+                  'parameters', 'builtins', 'dis_functions', 'functions_source'}) - HISTORY
+    if writes & structural or any(n.endswith('_functions') or n.startswith(('TRAP', 'LD_', 'DYLD_')) for n in writes):
+        return 'unknown', set()
+    if any(control_parameter(n) for n in writes - HISTORY):
+        # These bindings may influence external initialization. No dependency
+        # on a particular tool or interpretation of its configuration is assumed.
+        return 'runtime', (writes | reads) & HISTORY
+    return 'dependency', (writes | reads) & HISTORY
+
+
+def setting_invocation_commands(text):
+    """Command lookups in a literal external initialization boundary."""
+    argv = r'([A-Za-z0-9_./-]+)(?:[ \t]+[A-Za-z0-9_./-]+)*'
+    call = (re.fullmatch(r'(eval) "\$\(' + argv + r'\)"', text) or
+            re.fullmatch(r'(source|\.)[ \t]+<\(' + argv + r'\)', text))
+    return set(call.groups()) if call else set()
+
+
+def setting_source_operand(text):
+    symbolic = re.fullmatch(r'(?:source|\.)[ \t]+"\$(' + NAME + r')((?:/[A-Za-z0-9_.-]+)+)"', text)
+    if symbolic and symbolic[1] not in ('HOME', 'ZDOTDIR'):
+        parts = symbolic[2][1:].split('/')
+        if not {'.', '..'}.intersection(parts) and parts[-1] not in ('.zshenv', '.zprofile', '.zshrc', '.zlogin'):
+            return symbolic[1], symbolic[2][1:]
+    return None
+
+
+def setting_literal_binding(text):
+    literal = re.fullmatch(r'(?:export[ \t]+)?(' + NAME + r')="[A-Za-z0-9_./-]*"', text)
+    return literal[1] if literal else None
+
+
+def setting_context(raw):
+    """Private effects of a parser-bounded, non-selectable statement.
+
+    A runtime boundary describes where unknown output occurs. It conveys no
+    trust in the executable, its output, or the contents of an external script.
+    """
+    if len(raw) > 4096:
+        return 'unknown', set()
+    text = raw.decode()
+    option = re.fullmatch(r'(?:setopt|unsetopt)[ \t]+([A-Za-z_]+)', text)
+    if option:
+        name = option[1].upper().replace('_', '').removeprefix('NO')
+        for key in OPTIONS | {'INTERACTIVE_COMMENTS'}:
+            if name == key.replace('_', ''):
+                return 'dependency', {key}
+    if re.fullmatch(r"""bindkey[ \t]+(?:"[\w^ -]+"|'[\w^ -]+')[ \t]+[a-z][a-z0-9-]*""", text):
+        return 'dependency', {'KEYMAP'}
+    # The B5 grammar can identify exact reads and writes even when a history
+    # interaction excludes a declaration from the selectable B5 inventory.
+    try:
+        kind, name, intent = classify_declaration(text)
+    except Excluded:
+        pass
+    else:
+        if kind != 'initializer':
+            writes, reads = parameter_uses(name, intent)
+            if (writes | reads) & HISTORY:
+                return setting_parameters(writes, reads)
+    literal = setting_literal_binding(text)
+    if literal:
+        return setting_parameters({literal}, set())
+    if setting_invocation_commands(text):
+        return 'runtime', set()
+    if setting_source_operand(text):
+        return 'runtime', set()
+    return 'unknown', set()
+
+
+def classify_setting(text):
+    option = re.fullmatch(r'(setopt|unsetopt)[ \t]+([A-Z_]+)', text)
+    if option and option[2] in OPTIONS:
+        return 'setting', option[2], dict(group='options', value=option[1] == 'setopt', guard=None)
+    number = re.fullmatch(r'(HISTSIZE|SAVEHIST)=([1-9][0-9]{0,5}|1000000)', text)
+    if number:
+        return 'setting', number[1], dict(group='history', value=int(number[2]), guard=None)
+    history = re.fullmatch(r'HISTFILE="(?:\$HOME|\$\{HOME\})/(\.zsh_history|\.zhistory)"', text)
+    if history:
+        return 'setting', 'HISTFILE', dict(group='history', value=history[1], guard=None)
+    keymap = re.fullmatch(r'bindkey[ \t]+-(e|v)', text)
+    if keymap:
+        return 'setting', 'KEYMAP', dict(group='keymaps', value='emacs' if keymap[1] == 'e' else 'vi', guard=None)
+    return None
+
+
+def classify(text, *, settings=False):
     """Return (kind, binding, intent) for one complete parser-bounded outer sublist."""
     if len(text.encode()) > 4096:
         raise Excluded('resource_limit')
     if PRIVATE.search(text):
         raise Excluded('restricted_content')
+    if settings:
+        setting = classify_setting(text)
+        if setting:
+            return setting
+    kind, name, intent = classify_declaration(text)
+    if settings and kind != 'initializer':
+        writes, reads = parameter_uses(name, intent)
+        if (writes | reads) & HISTORY:
+            raise Excluded('special_parameter')
+    return kind, name, intent
+
+
+def classify_declaration(text):
     guard = None
     guarded = re.fullmatch(r'\[\[ -o (interactive|login) \]\][ \t]+&&[ \t]+(.+)', text, re.S)
     if guarded:
@@ -314,6 +427,10 @@ def classify(text):
 
 
 def parameter_uses(name, intent):
+    if 'group' in intent:
+        if intent['group'] == 'history':
+            return {name}, {'HOME'} if name == 'HISTFILE' else set()
+        return {'setting:' + name}, set()
     if 'provider' in intent:
         # Only the source operand is lexical input. A provider's runtime effects
         # and the contents of its script remain unknown.
@@ -342,7 +459,17 @@ def parameter_uses(name, intent):
 
 def presentation(row, contexts, source):
     kind, name, ir = row['kind'], row['key'], row['details']['intent']
-    if kind == 'initializer':
+    if kind == 'setting':
+        if ir['group'] == 'options':
+            label = name + (' — Enabled' if ir['value'] else ' — Disabled')
+            detail = 'Preserves the saved Zsh option in its startup context.'
+        elif ir['group'] == 'history':
+            label = name + ' — ' + ('~/' if name == 'HISTFILE' else '') + str(ir['value'])
+            detail = 'Restores the history setting. Command history is never transferred.'
+        else:
+            label = 'Keymap — ' + ('Emacs' if ir['value'] == 'emacs' else 'Vi')
+            detail = 'Selects the standard editing keymap for interactive Zsh sessions.'
+    elif kind == 'initializer':
         label = name + ' — Initialize shell environment'
         detail = 'Configures ' + name + ' for new shell sessions. It must be available on the destination Mac.'
         if name == 'nvm' and not ir['variant'].endswith(' --no-use'):
@@ -397,7 +524,10 @@ def presentation(row, contexts, source):
         scope += {'nonempty-nvm-script': ' · if nvm is available', 'pyenv-bin-directory': ' · if bin exists', 'interactive': ' · when interactive',
                   'login': ' · at login'}[ir['guard']]
     origin = source if source in ('.zshenv', '.zprofile', '.zshrc', '.zlogin') else 'a sourced configuration file'
-    return dict(label=label, explanation=detail, context=scope, origin=origin, capture_only=False)
+    result = dict(label=label, explanation=detail, context=scope, origin=origin, capture_only=False)
+    if kind == 'setting':
+        result['setting_group'] = ir['group']
+    return result
 
 
 def requirement_details(snapshot):

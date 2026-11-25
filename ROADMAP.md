@@ -14,21 +14,15 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
 - **Implemented — Qualification Open:** development-runtime execution, completion
   and integration, native Workspace E2E, Homebrew Setup Installer handoff and the
   remaining supported-domain, lifecycle, security and accessibility gates.
-- **Current functional priority:** Shell / Zsh Completion. Functional B4 Custom Commands passed real-Mac
+- **Current functional priority:** Stage 3C Recovery. Functional B4 Custom Commands passed real-Mac
   GUI acceptance on 2026-11-18. B5 Variables & PATH passed its
   [controlled real-Mac mixed Capture, Restore and Check](docs/qualification/SHELL-VARIABLES-PATH-2026-11-20.md#controlled-real-mac-acceptance).
   [Provider qualification](docs/toolkit/CONFIGURATION.md#variables--path-recovery-b5c),
   hosted CI, packaged clean-Mac and full-product E2E remain open.
-  The functional taxonomy is Custom Commands
-  (Aliases & Functions / Scripts in Selection),
-  Variables & PATH and Settings, with Plugins & Themes conditional on qualified
-  support and relevant items; remaining capabilities stay open. Existing SSH Host
-  presentation, independent identity selection and SSH → Git integration are preserved.
-  Prioritize practical source-to-target recovery, including qualified structure and
-  dependencies; discovery counts alone do not close the checkpoint. The bounded
-  native Selection/consent integration preserves individual aliases and each
-  workflow's accepted presentation; unrelated visual gates remain open. Greater coverage
-  does not authorize further layout changes.
+  B6A Shell Settings passed [controlled functional and visual acceptance](docs/qualification/SHELL-SETTINGS-B6A-2026-11-25.md).
+  Two real Native Restore cycles verified all five selected settings. Hosted CI for B6A
+  and final packaged clean-Mac qualification remain open.
+  Additional integrations require a separate [product decision](docs/PRODUCT-DIRECTION.md#shell-scope-for-10).
 - **Aliases & Scripts v5 — Implemented / Real GUI E2E Accepted (2026-11-15):** independent Add Script
   selection and alias-linked discovery, executable/non-executable Shell/Python
   transfer in Bundle V1, bounded resources, quarantine preservation, protected parent creation and file-level
@@ -59,7 +53,7 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
   restored three Aliases, three Functions and two Scripts after controlled removal.
   All eight verified and matched, the restored commands ran, and repeat Rebuild was a no-op.
   Dynamic startup, broader prerequisites, other platforms and packaged-release qualification remain open.
-- **Before Macseed 1.0:** finish Shell, Stage 3C and remaining Stage 16 functionality;
+- **Before Macseed 1.0:** finish Stage 3C and remaining Stage 16 functionality;
   implement Stage 17 autonomous distribution; then complete comprehensive Native
   Desktop/packaged clean-Mac qualification and Early Access. No stage is closed by
   an ordinary functional checkpoint.
@@ -249,38 +243,27 @@ implementations or the closed general D1–D4/R5 Restore audit.
 
 ## Current Execution Order
 
-This is the single authoritative execution sequence toward Macseed 1.0, revised
-by the approved Shell-first decision. Complete one bounded checkpoint at a time.
+The [Shell contract](docs/toolkit/CONFIGURATION.md#shell--zsh-configuration)
+defines the implemented recovery behavior. Retain its [qualification tasks](TODO.md#shell-qualification)
+alongside the following functional and release sequence.
 
-1. **Shell / Zsh Completion — current functional priority.** Aliases & Scripts v5
-   has real GUI A/B/C acceptance within its documented scope. The
-   [parser foundation](docs/core/SHELL-PARSER.md) and private
-   [typed state codec](docs/toolkit/CONFIGURATION.md#typed-shell-state-foundation-b1) are implemented;
-   explicit Functions Capture/Bundle and bounded Restore/Verify/Check are implemented.
-   With functional B4 Custom Commands and B5 Variables & PATH accepted, continue
-   Shell Settings and useful
-   Plugins & Themes only when independently qualified. Startup/source relationships
-   remain provenance and dependencies within these categories.
-   Preserve legacy snapshots and existing approved capabilities. The
-   [Shell contract](docs/toolkit/CONFIGURATION.md#shell--zsh-configuration) owns actual
-   behavior; [TODO](TODO.md#shell--zsh-functional-completion--current) owns open slices.
-2. **Stage 3C Recovery — immediately after Shell functional completion.** Extend
+1. **Stage 3C Recovery — next functional checkpoint.** Extend
    existing durable lifecycle/admission journals and Stop/fences with operation-owned
    reconciliation for ordinary Cask/DMG resources and uncertain process outcomes.
    Allow fresh preparation/execution only after authoritative reconciliation under
    the [Core contract](docs/core/APPLICATION-INTERFACE.md#stage-3c-reconciliation-boundary).
    Unknown/foreign evidence stays blocked: no automatic journal clearing, unrelated
    volume detachment, user-data deletion or whole-Mac rollback.
-3. **Remaining Stage 16 functional completion.** Close outstanding implementation
+2. **Remaining Stage 16 functional completion.** Close outstanding implementation
    gaps in existing supported capabilities, including remaining 16I/16K work, without
    reopening accepted UI, Assisted Restore or completed D1–D4/R5 behavior. Preserve
    Homebrew Setup, Workspace, SSH, security, lifecycle and accessibility qualification
    requirements separately from implementation status.
-4. **[Stage 17 — autonomous distribution](#stage-17--distribution--clean-mac-e2e).**
+3. **[Stage 17 — autonomous distribution](#stage-17--distribution--clean-mac-e2e).**
    Implement checkout-independent bundled Core/Python/runtime, a managed writable
    workspace, signing, notarization and DMG delivery. Packaging implementation does
    not itself establish clean-Mac or release qualification.
-5. **Final comprehensive qualification.** Complete full application-wide Native
+4. **Final comprehensive qualification.** Complete full application-wide Native
    Desktop Capture → Rebuild → Verify → Check → no-op in an isolated macOS account,
    packaged clean-Mac E2E, supported-platform/interoperability matrices, real
    Restore/Check, security, interruption/recovery and accessibility release gates.
@@ -290,7 +273,7 @@ by the approved Shell-first decision. Complete one bounded checkpoint at a time.
    before those workflows. Separate standalone native integration and controlled
    real-GUI gates under [Issue #1](https://github.com/jetiaks-AKS/macseed/issues/1)
    remain open despite the Python admission PASS; no issue is automatically closed.
-6. **[Early Access / Alpha](#early-access--alpha) → [Macseed 1.0](#macseed-10).**
+5. **[Early Access / Alpha](#early-access--alpha) → [Macseed 1.0](#macseed-10).**
    Validate with external technical users, resolve observed issues and complete
    release preparation only after mandatory gates and supported limits are recorded.
 
@@ -420,7 +403,7 @@ resolve supported HOME-relative paths and identify dependencies on captured
 Scripts. Enabling/activating restored jobs requires explicit user authorization;
 restoration must not run them automatically. Initial scope excludes system
 LaunchDaemons. Evaluate cron and other automation mechanisms separately later.
-These ideas do not reorder Shell completion, Stage 3C, remaining Stage 16,
+These ideas do not reorder Stage 3C, remaining Stage 16,
 distribution, signing/notarization, final qualification and release preparation.
 
 **Possible, demand-driven Environment Manager capabilities:** independent Profiles,

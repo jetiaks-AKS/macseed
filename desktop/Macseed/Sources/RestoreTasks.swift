@@ -377,7 +377,8 @@ struct RestoreTaskPresentation {
                     return AssistedAppStoreItem(appID: app.appID, status: status)
                 }
                 return TaskItemPresentation(id: item.id,
-                    item: DisplayItem(id: item.id, title: operationProgress ? (entry.flatMap { WorkspaceSettingLabels.title(domain: $0.domain, identity: $0.itemID) } ?? Self.operationTitle(item.title, entry: entry)) : item.title, status: item.status, action: message, reason: reason, pathHelp: item.pathHelp), state: state, diagnostic: entry?.diagnostic,
+                    item: DisplayItem(id: item.id, title: operationProgress ? (entry.flatMap { WorkspaceSettingLabels.title(domain: $0.domain, identity: $0.itemID) } ?? Self.operationTitle(item.title, entry: entry)) : item.title, status: item.status, action: message, reason: reason, pathHelp: item.pathHelp,
+                        shellSettingGroup: item.shellSettingGroup), state: state, diagnostic: entry?.diagnostic,
                     technicalName: operationProgress ? entry.flatMap { $0.itemID.hasPrefix("opaque:") ? nil : "\($0.domain) / \($0.itemID)" } : nil,
                     executionAction: operationProgress ? entry?.action.replacingOccurrences(of: "_", with: " ").capitalized : nil,
                     resultLabels: labels, resultTechnicalDetails: technical.isEmpty ? nil : technical,
@@ -1162,6 +1163,40 @@ extension TaskDomainPresentation {
         if requirements.allSatisfy({ ($0.resultLabels.contains("Already Matches") || $0.item.status == .matching) && !$0.resultLabels.contains("Applied") }) { return "Already Matches" }
         return "Completed"
     }
+    // Result disclosures partition the existing rows. Domain diagnostics stay with Shell.
+    var rebuildResultChildren: [TaskDomainPresentation] {
+        func child(_ id: String, _ title: String, _ symbol: String, _ members: [TaskItemPresentation]) -> TaskDomainPresentation? {
+            members.isEmpty ? nil : TaskDomainPresentation(id: id, title: title, symbol: symbol, items: members)
+        }
+        switch id {
+        case "shell-zsh", ShellCommandPresentation.commandsID:
+            let visible = resultVisibleItems
+            let aliases = visible.filter { ShellDefinitionPresentation.kind($0.sourceItemID ?? "") != nil }
+            let scripts = visible.filter { $0.sourceItemID?.hasPrefix("shell-script:") == true }
+            if id == ShellCommandPresentation.commandsID {
+                return [child(ShellCommandPresentation.aliasesID, "Aliases & Functions", "terminal", aliases),
+                        child(ShellCommandPresentation.scriptsID, "Scripts", "applescript", scripts)].compactMap { $0 }
+            }
+            let declarations = visible.filter { CoreCaptureInventoryRow.Item.isEnvironmentID($0.sourceItemID ?? "") }
+            let settings = visible.filter { item in
+                guard let identity = item.sourceItemID else { return false }
+                return CoreCaptureInventoryRow.Item.isSettingID(identity)
+                    || (title == DeveloperSelectionGroup.settingsTitle && (identity == ".zshrc" || identity.hasPrefix("opaque:")))
+            }
+            let environment = declarations.filter { !CoreCaptureInventoryRow.Item.isSettingID($0.sourceItemID ?? "") }
+            return [child(ShellCommandPresentation.commandsID, "Custom Commands", "terminal", aliases + scripts),
+                    child(DeveloperSelectionGroup.environmentID, "Variables & PATH", "list.bullet.rectangle", environment),
+                    child(DeveloperSelectionGroup.settingsID, DeveloperSelectionGroup.settingsTitle, "slider.horizontal.3", settings)].compactMap { $0 }
+        case DeveloperSelectionGroup.settingsID:
+            return ShellSettingGroup.sections(resultVisibleItems, by: \.item.shellSettingGroup).map { group, members in
+                TaskDomainPresentation(id: group.disclosureID, title: group.title, symbol: "list.bullet",
+                    items: members.sorted { $0.item.title < $1.item.title })
+            }
+        default:
+            return resultChildren
+        }
+    }
+
     var resultChildren: [TaskDomainPresentation] {
         guard id == "macOS Settings" || id == "macos-settings" else { return [] }
         let known = CaptureMacOSSettingsGroup.domainIDs

@@ -83,7 +83,7 @@ struct CoreRestoreInspection: Decodable {
     static func supportsBundleFeatures(_ features: [String: Int]?) -> Bool {
         (features ?? [:]).allSatisfy { key, version in
             switch key {
-            case "shell-state": [1, 2].contains(version)
+            case "shell-state": [1, 2, 3].contains(version)
             case "workspace-topology", "vscode-workspaces": version == 1
             case "shell-aliases": (1...5).contains(version)
             case "ssh-configuration": version == 2
@@ -110,8 +110,13 @@ struct CoreRestoreInspection: Decodable {
         }
         let shell = catalog.inventory.first { $0.id == "shell-zsh" }?.items ?? []
         let declarations = shell.filter { CoreCaptureInventoryRow.Item.isEnvironmentID($0.id) }
-        guard Self.supportsBundleFeatures(requiredFeatures),
-              (requiredFeatures?["shell-state"] == 2) == !declarations.isEmpty,
+        guard shell.allSatisfy({ item in
+            let setting = CoreCaptureInventoryRow.Item.isSettingID(item.id)
+            return (item.environment?.settingGroup != nil) == setting && (!setting || CoreCaptureInventoryRow.Item.isEnvironmentID(item.id))
+        }),
+              Self.supportsBundleFeatures(requiredFeatures),
+              [2, 3].contains(requiredFeatures?["shell-state"] ?? 0) == !declarations.isEmpty,
+              (requiredFeatures?["shell-state"] == 3) == declarations.contains(where: { CoreCaptureInventoryRow.Item.isSettingID($0.id) }),
               declarations.allSatisfy({ $0.label.utf8.count <= 160 && !$0.label.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
                   && $0.environment?.valid != false }) else { throw CoreRuntimeError.malformedEvent }
         if !declarations.isEmpty {
@@ -434,7 +439,7 @@ struct CoreRestorePreparation: Decodable {
         try CoreShellScript.validateCandidates(shellScriptCandidates, aliases: Set(expected.items["shell-zsh"] ?? []))
         if let shellSkippedItems {
             let items = Set(expected.items["shell-zsh"] ?? [])
-            let typed = shellStateVersion == 2 && items.contains(where: CoreCaptureInventoryRow.Item.isEnvironmentID)
+            let typed = [2, 3].contains(shellStateVersion ?? 0) && items.contains(where: CoreCaptureInventoryRow.Item.isEnvironmentID)
             // A narrowed v2 selection contains B5 declarations. Legacy v5 inspection
             // has no shell-state version. Only the latter producer emits Script skips.
             guard typed || shellStateVersion == nil,

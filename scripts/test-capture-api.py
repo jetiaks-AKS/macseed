@@ -246,6 +246,189 @@ _Task._launch = _fixture_ignored_constraint
                          ['shell_activation_unknown'])
         self.assertFalse((self.root / 'mutations').exists())
 
+    def environment_target(self, resources):
+        target = self.root / 'target-home'
+        target.mkdir(mode=0o700)
+        self.home = target
+        self.environment.update(HOME=str(target), MACSEED_DESKTOP_BUNDLE=str(resources.parent.parent))
+        (self.root / 'bin/sudo').write_text('#!/bin/bash\nexit 0\n')
+        (self.project / 'bin').mkdir()
+        shutil.copy2(ROOT / 'bin/bs', self.project / 'bin/bs')
+        shutil.copy2(ROOT / 'scripts/install-bs.sh', self.project / 'scripts/install-bs.sh')
+        (self.root / 'bin/bs').symlink_to(self.project / 'bin/bs')
+        self.environment['BS_INSTALL_DIR'] = str(self.root / 'bin')
+        return target
+
+    def test_settings_production_recovery(self):
+        self.settings_recovery(initialized=False)
+
+    def test_settings_recovery_after_external_init(self):
+        self.settings_recovery(initialized=True)
+
+    def test_settings_recovery_after_symbolic_source(self):
+        rc, _, resources, chosen = self.functions_fixture()
+        if not self.functions_enforced:
+            self.assert_functions_unavailable(chosen)
+            return
+        prefix = (b'export ZSH="$HOME/.oh-my-zsh"\nZSH_THEME="fixture"\nplugins=(git)\n'
+                  b'source "$ZSH/oh-my-zsh.sh"\n')
+        declarations = b'setopt AUTO_CD\nunsetopt BEEP\nHISTSIZE=1000000\nSAVEHIST=1000000\nbindkey -e\n'
+        relative = Path('.oh-my-zsh/oh-my-zsh.sh')
+        child = b'# independently installed startup file\nsetopt interactivecomments\n'
+        rc.write_bytes(prefix + declarations)
+        (self.home / relative.parent).mkdir(mode=0o700)
+        (self.home / relative).write_bytes(child)
+        def data(response):
+            result, events = response
+            self.assertEqual(result.returncode, 0, events[-2:])
+            return events[-2]['data']
+        options = dict(shell_environment=True, shell_settings=True)
+        shell = next(r for r in data(self.invoke_capture(extra=options))['inventory'] if r['domain'] == 'shell-zsh')
+        ids = sorted(i['item_id'] for i in shell['items'] if i['item_id'].startswith('shell-setting:'))
+        self.assertEqual(len(ids), 5)
+        selection = dict(categories=[], items={'shell-zsh': ids})
+        capture = dict(selection, secure_identities=[])
+        options['shell_plaintext_ids'] = ids
+        prepared = data(self.invoke_capture(selection=capture, extra=options))
+        archive = self.root / 'symbolic.mbt'
+        data(self.invoke_capture('capture_execute', capture, dict(options, destination=str(archive),
+            expected_prepared_capture_id=prepared['prepared_capture_id'])))
+        typed = bundle.typed_shell(bundle.validate_archive(archive))
+        self.assertCountEqual([r['key'] for r in typed._value['items']],
+                              ['AUTO_CD', 'BEEP', 'HISTSIZE', 'SAVEHIST', 'KEYMAP'])
+        self.assertTrue(all(r['details']['placement']['source_required'] for r in typed._value['items']))
+        self.assertEqual([r['path'] for r in typed._value['sources']], ['.zshrc'])
+        target = self.environment_target(resources)
+        (target / '.zshenv').write_bytes((rc.parent / '.zshenv').read_bytes())
+        (target / relative.parent).mkdir(mode=0o700)
+        (target / relative).write_bytes(child)
+        path = target / '.zshrc'
+        shutil.copyfile(rc, path)
+        baseline = path.read_bytes().removesuffix(declarations)
+        self.assertEqual(baseline, prefix)
+        path.write_bytes(baseline)
+        def preview():
+            return data(self.function_core('restore_prepare', archive, selection=selection))
+        prepared = preview()
+        rows = [r for r in prepared['plan'] if r['item_id'] in ids]
+        self.assertCountEqual([(r['item_id'], r['disposition']) for r in rows], [(k, 'planned') for k in ids], rows)
+        facts = data(self.function_core('restore_execute', archive, selection=selection,
+            prepared=prepared['prepared_plan_id']))['verification']['details']['verification_records']
+        self.assertCountEqual([r['item_id'] for r in facts if r['conformity'] == 'verified'
+                               and r['predicate'] == 'setting_declaration'], ids)
+        self.assertEqual(path.read_bytes(), prefix + declarations)
+        self.assertEqual((target / relative).read_bytes(), child)
+        records = data(self.function_core('environment_compare', archive))['comparison_records']
+        self.assertCountEqual([r['item_id'] for r in records if r['comparison_kind'] == 'matching' and r['item_id'] in ids], ids)
+        repeat = preview()
+        self.assertFalse(repeat['has_executable_changes'])
+        before = path.stat()
+        data(self.function_core('restore_execute', archive, selection=selection, prepared=repeat['prepared_plan_id']))
+        self.assertEqual((path.stat().st_ino, path.stat().st_mtime_ns), (before.st_ino, before.st_mtime_ns))
+        self.assertEqual(path.read_bytes(), prefix + declarations)
+        self.assertEqual((target / relative).read_bytes(), child)
+
+    def settings_recovery(self, *, initialized):
+        startup, _, resources, chosen = self.functions_fixture()
+        if not self.functions_enforced:
+            self.assert_functions_unavailable(chosen)
+            return
+        saved = (b"alias listing='ls -la'\nexport EDITOR=vi\nsetopt AUTO_CD\nunsetopt BEEP\n"
+                 b'HISTSIZE=10000\nSAVEHIST=5000\nHISTFILE="$HOME/.zsh_history"\nbindkey -e\n')
+        prefix = b'unsetopt histignoredups\n'
+        expected_groups = ['options', 'options', 'history', 'history', 'history', 'keymaps']
+        if initialized:
+            saved = saved.replace(b'HISTFILE="$HOME/.zsh_history"\n', b'')
+            saved += b'setopt HIST_IGNORE_DUPS\nsetopt HIST_IGNORE_SPACE\nunsetopt HIST_REDUCE_BLANKS\n'
+            expected_groups = ['options'] * 5 + ['history'] * 2 + ['keymaps']
+            prefix = b'eval "$(starship init zsh)"\neval "$(fixture-tool initialize)"\nsetopt interactivecomments\n'
+            probe = self.root / 'bin/fixture-tool'
+            probe.write_text('#!/bin/sh\ntouch "$HOME/initializer-executed"\n')
+            probe.chmod(0o700)
+            (self.home / '.zprofile').write_bytes(b'eval "$(/opt/homebrew/bin/brew shellenv zsh)"\n')
+        wrapper = b'# capture-only QA wrapper\n' if initialized else b''
+        startup.write_bytes(prefix + wrapper + saved)
+        options = dict(shell_environment=True, shell_settings=True)
+        def data(response):
+            result, events = response
+            self.assertEqual(result.returncode, 0, events[-2:])
+            return events[-2]['data']
+        inventory = next(row for row in data(self.invoke_capture(extra=options))['inventory'] if row['domain'] == 'shell-zsh')
+        items = [row for row in inventory['items'] if row['item_id'].startswith(('shell-setting:', 'shell-variable:')) or row['label'] == 'listing']
+        self.assertEqual(len(items), len(expected_groups) + 2, items)
+        groups = [row['environment']['setting_group'] for row in items if row['item_id'].startswith('shell-setting:')]
+        self.assertCountEqual(groups, expected_groups)
+        ids = sorted(row['item_id'] for row in items)
+        selection = dict(categories=[], items={'shell-zsh': ids})
+        capture = dict(selection, secure_identities=[])
+        options['shell_plaintext_ids'] = [row['item_id'] for row in items if row.get('environment')]
+        prepared = data(self.invoke_capture(selection=capture, extra=options))
+        archive = self.root / 'settings.mbt'
+        receipt = data(self.invoke_capture('capture_execute', capture, dict(options, destination=str(archive),
+            expected_prepared_capture_id=prepared['prepared_capture_id'])))
+        self.assertEqual(receipt['bundle']['required_features']['shell-state'], 3)
+        self.assertEqual(receipt['bundle']['shell_functional_counts']['settings'], len(expected_groups))
+        typed = bundle.typed_shell(bundle.validate_archive(archive))
+        contract = bundle.shell_state_contract()
+        alias = next(i for i in ids if i.startswith('shell-alias:'))
+        variable = next(i for i in ids if i.startswith('shell-variable:'))
+        for subset, version in (([alias], 1), ([alias, variable], 2)):
+            narrowed = contract.select(typed, subset)
+            self.assertEqual(contract.decode(*contract.encode(narrowed))._value['schema'], version)
+        target = self.environment_target(resources)
+        self.assertFalse((startup.parent / 'initializer-executed').exists())
+        history = target / '.zsh_history'
+        history.write_bytes(b'private fixture\n')
+        stamp = history.stat()
+        path = target / '.zshrc'
+        retained = b'' if initialized else b'# keep target preferences\n'
+        if retained:
+            path.write_bytes(retained)
+        for repeat in (False, True):
+            prepared = data(self.function_core('restore_prepare', archive, selection=selection))
+            self.assertEqual(prepared['has_executable_changes'], not repeat, prepared['plan'])
+            facts = data(self.function_core('restore_execute', archive, selection=selection,
+                prepared=prepared['prepared_plan_id']))['verification']['details']['verification_records']
+            self.assertEqual({r['item_id'] for r in facts if r['conformity'] == 'verified'}, set(ids))
+            self.assertEqual(sum(r['predicate'] == 'setting_declaration' for r in facts), len(expected_groups))
+            self.assertEqual(path.read_bytes(), retained + saved)
+            if repeat:
+                self.assertEqual((path.stat().st_ino, path.stat().st_mtime_ns), before)
+            before = (path.stat().st_ino, path.stat().st_mtime_ns)
+        records = data(self.function_core('environment_compare', archive))['comparison_records']
+        self.assertEqual({r['item_id'] for r in records if r['comparison_kind'] == 'matching'}, set(ids))
+        self.assertEqual((history.stat().st_ino, history.stat().st_mtime_ns), (stamp.st_ino, stamp.st_mtime_ns))
+        self.assertEqual(history.read_bytes(), b'private fixture\n')
+
+        if initialized:
+            keys = {'AUTO_CD', 'BEEP', 'HISTSIZE', 'SAVEHIST', 'KEYMAP'}
+            five = [row for row in typed._value['items'] if row['kind'] == 'setting' and row['key'] in keys]
+            self.assertEqual({r['key'] for r in five}, keys)
+            selected = sorted(r['id'] for r in five)
+            selection = dict(categories=[], items={'shell-zsh': selected})
+            for name in ('.zshenv', '.zprofile'):
+                (target / name).write_bytes((startup.parent / name).read_bytes())
+            self.assertTrue(all('placement' in row['details'] for row in five))
+            original = startup.read_bytes().replace(wrapper, b'')
+            baseline = original
+            for row in five:
+                raw = contract.content(typed, row) + b'\n'
+                self.assertEqual(baseline.count(raw), 1)
+                baseline = baseline.replace(raw, b'')
+            path.write_bytes(baseline)
+            prepared = data(self.function_core('restore_prepare', archive, selection=selection))
+            self.assertCountEqual([(r['item_id'], r['disposition']) for r in prepared['plan']
+                                   if r['item_id'] in selected], [(key, 'planned') for key in selected])
+            self.assertEqual(path.read_bytes(), baseline)
+            records = data(self.function_core('restore_execute', archive, selection=selection,
+                prepared=prepared['prepared_plan_id']))['verification']['details']['verification_records']
+            self.assertEqual({r['item_id'] for r in records if r['conformity'] == 'verified'}, set(selected))
+            self.assertEqual(path.read_bytes(), original)
+            records = data(self.function_core('environment_compare', archive))['comparison_records']
+            self.assertEqual({r['item_id'] for r in records if r['comparison_kind'] == 'matching'} & set(selected), set(selected))
+            self.assertFalse(data(self.function_core('restore_prepare', archive, selection=selection))['has_executable_changes'])
+            self.assertFalse((target / 'initializer-executed').exists())
+
     def test_environment_production_recovery(self):
         startup, _, resources, chosen = self.functions_fixture()
         if not self.functions_enforced:
@@ -275,16 +458,7 @@ _Task._launch = _fixture_ignored_constraint
         result, events = self.invoke_capture('capture_execute', environment_selection, dict(options, destination=str(environment_archive),
             expected_prepared_capture_id=events[-2]['data']['prepared_capture_id']))
         self.assertEqual(result.returncode, 0, events[-1])
-        target = self.root / 'target-home'
-        target.mkdir(mode=0o700)
-        self.home = target
-        self.environment.update(HOME=str(target), MACSEED_DESKTOP_BUNDLE=str(resources.parent.parent))
-        (self.root / 'bin/sudo').write_text('#!/bin/bash\nexit 0\n')
-        (self.project / 'bin').mkdir()
-        shutil.copy2(ROOT / 'bin/bs', self.project / 'bin/bs')
-        shutil.copy2(ROOT / 'scripts/install-bs.sh', self.project / 'scripts/install-bs.sh')
-        (self.root / 'bin/bs').symlink_to(self.project / 'bin/bs')
-        self.environment['BS_INSTALL_DIR'] = str(self.root / 'bin')
+        target = self.environment_target(resources)
         for selected, archive in [(env_ids, environment_archive), (ids, archive), (ids, archive)]:
             selection = dict(categories=[], items={'shell-zsh': sorted(selected)})
             result, events = self.function_core('restore_prepare', archive, selection=selection)

@@ -55,6 +55,18 @@ struct CoreRestoreSelection: Codable, Equatable, Sendable {
 }
 
 // The discriminator comes from Core inventory, never inferred from a sample category.
+enum ShellSettingGroup: String, Decodable, CaseIterable, Sendable {
+    case options, history, keymaps
+    var title: String {
+        switch self {
+        case .options: "Shell Options"
+        case .history: "History"
+        case .keymaps: "Key Bindings"
+        }
+    }
+    var disclosureID: String { "shell-settings-" + rawValue }
+}
+
 struct CoreCaptureInventoryRow: Decodable, Sendable {
     let domain: String
     let status: String
@@ -75,21 +87,24 @@ struct CoreCaptureInventoryRow: Decodable, Sendable {
             let context: String
             let origin: String
             var valid: Bool {
-                [(explanation, 240), (context, 48), (origin, 64)].allSatisfy { text, limit in
+                (settingGroup == nil || !captureOnly) && [(explanation, 240), (context, 48), (origin, 64)].allSatisfy { text, limit in
                     !text.isEmpty && text.utf8.count <= limit && !text.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
                 }
             }
+            var settingGroup: ShellSettingGroup? = nil
             let captureOnly: Bool
-            enum CodingKeys: String, CodingKey { case explanation, context, origin, captureOnly = "capture_only" }
+            enum CodingKeys: String, CodingKey { case explanation, context, origin, settingGroup = "setting_group", captureOnly = "capture_only" }
         }
         static func environmentPredicate(_ id: String) -> String? {
             guard isEnvironmentID(id) else { return nil }
+            if isSettingID(id) { return "setting_declaration" }
             if id.hasPrefix("shell-variable:") { return "variable_declaration" }
             if id.hasPrefix("shell-initializer:") { return "initializer_declaration" }
             return "path_operation"
         }
+        static func isSettingID(_ id: String) -> Bool { id.hasPrefix("shell-setting:") }
         static func isEnvironmentID(_ id: String) -> Bool {
-            id.range(of: #"^shell-(variable|path-operation|initializer):[0-9a-f]{64}\z"#, options: .regularExpression) != nil
+            id.range(of: #"^shell-(variable|path-operation|initializer|setting):[0-9a-f]{64}\z"#, options: .regularExpression) != nil
         }
         enum CodingKeys: String, CodingKey { case itemID = "item_id", label, environment }
     }
@@ -272,8 +287,9 @@ struct CoreRequest: Sendable {
     let shellScriptSelection: [String]?
     let shellScriptPolicy: String?
     let shellScriptPaths: [String]
+    let shellSettings: Bool
     let shellPlaintextIDs: [String]?
-    init(_ command: CoreCommand, operationID: String = UUID().uuidString, externalIdentityPaths: [String] = [], restoreDestinations: CoreRestoreDestinations? = nil, sshApprovals: CoreSSHApprovals? = nil, shellScriptIDs: [String] = [], shellScriptSelection: [String]? = nil, shellScriptPolicy: String? = nil, shellScriptPaths: [String] = [], shellPlaintextIDs: [String]? = nil) {
+    init(_ command: CoreCommand, operationID: String = UUID().uuidString, externalIdentityPaths: [String] = [], restoreDestinations: CoreRestoreDestinations? = nil, sshApprovals: CoreSSHApprovals? = nil, shellScriptIDs: [String] = [], shellScriptSelection: [String]? = nil, shellScriptPolicy: String? = nil, shellScriptPaths: [String] = [], shellPlaintextIDs: [String]? = nil, shellSettings: Bool = false) {
         self.command = command
         self.operationID = operationID
         self.externalIdentityPaths = externalIdentityPaths
@@ -282,6 +298,7 @@ struct CoreRequest: Sendable {
         self.shellScriptIDs = shellScriptIDs
         self.shellScriptSelection = shellScriptSelection
         self.shellScriptPolicy = shellScriptPolicy
+        self.shellSettings = shellSettings
         self.shellPlaintextIDs = shellPlaintextIDs
         self.shellScriptPaths = shellScriptPaths
     }
@@ -296,6 +313,7 @@ struct CoreRequest: Sendable {
         if let shellPlaintextIDs {
             guard [.capturePrepare, .captureExecute].contains(command.operation),
                   var parameters = fields["parameters"]?.object else { throw CoreRuntimeError.invalidRequest }
+            if shellSettings { parameters["shell_settings"] = .bool(true) }
             parameters["shell_environment"] = .bool(true)
             parameters["shell_plaintext_ids"] = .array(shellPlaintextIDs.sorted().map(CoreJSON.string))
             fields["parameters"] = .object(parameters)
@@ -442,6 +460,11 @@ struct CoreCapabilities: Decodable, Sendable {
         let feature = features?["shell_environment_capture"]?.object
         return feature?["version"]?.integer == 2 && feature?["restore_supported"]?.boolean != nil
             && feature?["explicit_plaintext"]?.boolean == true
+    }
+    var supportsShellSettings: Bool {
+        let settings = features?["shell_settings"]?.object
+        return supportsEnvironmentRecovery && settings?["version"]?.integer == 1 && settings?["restore_supported"]?.boolean == true
+            && settings?["required_feature"]?.object?["shell-state"]?.integer == 3
     }
     var supportsEnvironmentRecovery: Bool {
         supportsEnvironmentCapture && features?["shell_environment_capture"]?.object?["restore_supported"]?.boolean == true

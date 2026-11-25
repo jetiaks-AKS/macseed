@@ -1,5 +1,7 @@
 """Read-only, private Shell definition evidence; never evaluates user source."""
 import importlib.util
+import json
+from bisect import bisect_left
 from pathlib import Path
 import re
 import time
@@ -29,10 +31,11 @@ class Observation:
     snapshot is B1 evidence, not an eligibility decision. Source outcomes include
     missing/rejected units that cannot belong to a selected B1 snapshot.
     """
-    __slots__ = ('snapshot', '_files', '_issues', '_loads', '_roots', 'uncertainties')
+    __slots__ = ('snapshot', '_files', '_inputs', '_issues', '_loads', '_roots', 'uncertainties')
 
-    def __init__(self, snapshot, files, issues, loads=(), roots=()):
+    def __init__(self, snapshot, files, issues, loads=(), roots=(), dependencies=None):
         self.snapshot, self._files, self._issues = snapshot, files, tuple(issues)
+        self._inputs = {**(dependencies or {}), **files}
         self._roots = tuple(roots)
         self._loads = tuple(loads)
         self.uncertainties = ('activation_unproven', 'function_calls_unresolved', 'alias_expansion_unresolved',
@@ -258,7 +261,7 @@ def _equivalent(candidates, files, loads, context):
 
 
 def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: False, _ignore_pending=(), aliases=False,
-            independent=False, _additional_sources=(), environment=False):
+            independent=False, _additional_sources=(), environment=False, settings=False):
     """Observe only an explicit HOME and trusted Parser; never ambient ZDOTDIR.
 
     Contexts are hypothetical standard startup sequences. System startup files,
@@ -277,7 +280,7 @@ def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: 
         parser.preflight(cancelled=cancelled)
         with base.home_directory(home) as (_, stable):
             result = _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, _additional_sources,
-                              lambda path: sources.file_state(home, path, _ignore_pending, limit=state.MAX_SOURCE), environment=environment)
+                              lambda path: sources.file_state(home, path, _ignore_pending, limit=state.MAX_SOURCE), environment=environment, settings=settings)
             stable()
             return result
     except (Invalid, client.Invalid):
@@ -286,20 +289,21 @@ def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: 
         raise Invalid('source_changed' if str(exc) == 'target_changed' else 'observation_failed') from None
 
 
-def project_appends(home, parser, observed, appends, cancelled, additional_sources, *, environment=False):
+def project_appends(home, parser, observed, appends, cancelled, additional_sources, *, environment=False, settings=False):
     """Reparse proposed original-source appends against the frozen, already observed startup graph."""
     def read(path):
-        if path not in observed._files:
+        if path not in observed._inputs:
             raise Invalid('source_changed')
-        file = observed._files[path]
+        file = observed._inputs[path]
         return appends.get(path, file['raw']), file['stamp']
-    return _observe(home, parser, None, CONTEXTS, cancelled, True, True, additional_sources, read, environment=environment)
+    return _observe(home, parser, None, CONTEXTS, cancelled, True, True, additional_sources, read, environment=environment, settings=settings)
 
 
-def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, additional_sources, read_state, *, environment=False):
+def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, additional_sources, read_state, *, environment=False, settings=False):
     contexts = [c for c in CONTEXTS if c in contexts]
     deadline = time.monotonic() + OBSERVATION_SECONDS
     files, issues, loads, occurrences = {}, [], [], []
+    dependencies = {}
     source_bytes = definition_count = response_bytes = 0
     def check():
         if cancelled():
@@ -309,16 +313,20 @@ def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, a
     def issue(path, code):
         if (path, code) not in issues:
             issues.append((path, code))
-    def read(path):
+    def read(path, *, dependency=False):
         nonlocal source_bytes, definition_count, response_bytes
         check()
         if path in files:
             return files[path]
-        if len(files) >= state.MAX_SOURCES:
+        store = dependencies if dependency else files
+        if path in store:
+            return store[path]
+        if len(files) + len(dependencies) >= state.MAX_SOURCES:
             raise Invalid('resource_limit')
         record = dict(status='missing', raw=None, stamp=None, source=None, units=[], names=[], commands=[], alias_names=[],
                       definition_count=0, response_bytes=0)
-        files[path] = record
+        store[path] = record
+        report = (lambda path, code: None) if dependency else issue
         try:
             try:
                 raw, stamp = read_state(path)
@@ -351,7 +359,7 @@ def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, a
                 record['all_outer_known'] = bounds is not None
                 record['all_outer_bounded'] = bounds is not None
                 if bounds is None:
-                    issue(path, 'environment_spans_unavailable')
+                    report(path, 'environment_spans_unavailable')
                 else:
                     literal_sources = {tuple(site) for command, _, site in commands if command == 'source'}
                     for first, last in bounds:
@@ -368,7 +376,7 @@ def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, a
                         record['boundaries'].add((first, last))
                         text = state.utf8(raw[first:last])
                         try:
-                            kind, key, intent = state.environment.classify(text)
+                            kind, key, intent = state.environment.classify(text, settings=settings)
                         except state.environment.Excluded as exc:
                             record['all_outer_known'] = False
                             if str(exc) == 'restricted_content':
@@ -390,20 +398,22 @@ def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, a
                 raise Invalid('resource_limit')
             record.update(status=('partial' if independent else 'unsupported') if opaque else 'observed', units=units, names=names, commands=commands, alias_names=alias_names,
                           definition_count=count, response_bytes=len(response))
+            if settings and environment:
+                record['setting_sites'] = list(_setting_sites(record))
             if opaque:
-                issue(path, 'unsupported_context')
+                report(path, 'unsupported_context')
         except client.Invalid as exc:
             if exc.code in ('cancelled', 'timeout', 'process_cleanup_failed'):
                 raise
             record['status'] = 'unsupported'
-            issue(path, exc.code)
+            report(path, exc.code)
         except Invalid:
             raise
         except (OSError, ValueError) as exc:
             if str(exc) == 'target_changed':
                 raise Invalid('source_changed') from None
             record['status'] = 'unsafe' if isinstance(exc, OSError) or not isinstance(exc, state.Invalid) else 'unsupported'
-            issue(path, 'unsafe_source' if record['status'] == 'unsafe' else 'source_encoding')
+            report(path, 'unsafe_source' if record['status'] == 'unsafe' else 'source_encoding')
         return record
 
     # Use the same portable reference policy as legacy Shell, but consume an
@@ -485,9 +495,12 @@ def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, a
     for path in additional_sources:
         read(path)  # Destination evidence only; never invent a load occurrence.
 
+    if settings and environment:
+        _setting_source_edges(files, loads, home, lambda path: read(path, dependency=True))
+
     # Recheck all observed and missing files, even those contributing no item.
     # A race invalidates the entire observation rather than salvaging stale data.
-    for path, record in files.items():
+    for path, record in (*files.items(), *dependencies.items()):
         check()
         if record['status'] == 'unsafe':
             continue
@@ -559,6 +572,8 @@ def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, a
             while load is not None and load not in used_loads:
                 used_loads.add(load); used_sources.add(load_map[load]['source'])
                 load = load_map[load]['parent']
+    if settings and environment:
+        _setting_layouts(files, loads)
     if environment:
         provider_sites = {(f['source']['id'], tuple(bounds)) for f in files.values() if f['source']
                           for kind, _, _, bounds in f.get('environment', []) if kind == 'initializer'}
@@ -609,7 +624,9 @@ def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, a
                 if (reads | writes) & private:
                     file.setdefault('environment_exclusions', set()).add('restricted_content')
                     continue
-                if kind == 'initializer':
+                if kind == 'setting':
+                    commands_used = set()  # Settings qualify command ownership per active route below.
+                elif kind == 'initializer':
                     commands_used = {'source', '.'} if key in ('nvm', 'asdf', 'Cargo') else {'eval', intent['variant'].split()[0]}
                     if intent['guard'] == 'nonempty-nvm-script':
                         commands_used.add('[')
@@ -625,6 +642,11 @@ def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, a
                 ordinals[kind, key] = order + 1
                 row = dict(kind=kind, key=key, source=source_id, loads=[load['id'] for load in visits],
                            details=dict(span=bounds, ordinal=order, intent=intent))
+                if kind == 'setting' and file.get('setting_runtime_graph'):
+                    row['details']['placement'] = dict(graph=file['setting_runtime_graph'],
+                        slot=bisect_left(file['setting_operations'], bounds[0]))
+                    if file['setting_source_required']:
+                        row['details']['placement']['source_required'] = True
                 row['id'] = state.item_identity(row)
                 items.append(row)
                 contents[row['id']] = file['raw'][slice(*bounds)]
@@ -640,7 +662,283 @@ def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, a
     except state.Invalid as exc:
         raise Invalid('resource_limit' if str(exc) == 'shell_state_resource_limit' else 'observation_failed') from None
     check()
-    return Observation(snapshot, files, issues, loads, root_paths)
+    return Observation(snapshot, files, issues, loads, root_paths, dependencies)
+
+
+def _bounded_operations(file):
+    if not file.get('all_outer_bounded'):
+        return None
+    raw, end = file['raw'], 0
+    spans = sorted(file['boundaries'])
+    for first, last in [*spans, (len(raw), len(raw))]:
+        if any(line.strip(b' \t\r') and not line.lstrip(b' \t').startswith(b'#')
+               for line in raw[end:first].split(b'\n')):
+            return None
+        end = last
+    return spans
+
+
+def _setting_source_reference(file, spans, home):
+    env = state.environment
+    bindings = {tuple(span): (name, intent) for kind, name, intent, span in file['environment']
+                if kind == 'variable' and not env.shell_control_parameter(name) and name not in env.HISTORY}
+    # Resolve one literal HOME-based directory at the start of this root. Only
+    # independent ordinary literal assignments may intervene before its use.
+    binding = spans[0]
+    if binding not in bindings:
+        return None
+    name, _ = bindings[binding]
+    text = state.utf8(file['raw'][slice(*binding)])
+    assignment = re.fullmatch(r'(?:export[ \t]+)?' + re.escape(name) +
+                              r'=("(?:\$HOME|\$\{HOME\})/[A-Za-z0-9_./-]+")', text)
+    directory = sources.reference(assignment[1], home) if assignment else None
+    if directory is None:
+        return None
+    prefix = {binding}
+    for call in spans[1:]:
+        statement = state.utf8(file['raw'][slice(*call)])
+        operand = env.setting_source_operand(statement)
+        if operand:
+            break
+        literal = env.setting_literal_binding(statement)
+        if (literal and literal not in (name, 'HOME', 'PATH', 'path') and literal not in env.HISTORY
+                and not env.shell_control_parameter(literal) and not env.PRIVATE.search(statement)):
+            prefix.add(call)
+            continue
+        other, intent = bindings.get(call, (None, {}))
+        if (not other or other == name or intent.get('form') not in ('assignment', 'export')
+                or intent['operator'] != '=' or intent['flags'] or intent['guard']
+                or any(part[0] != 'literal' for word in intent['words'] for part in word)):
+            break
+        prefix.add(call)
+    if not operand or operand[0] != name:
+        return None
+    _, suffix = operand
+    target = directory + '/' + suffix
+    if sources.portable(target) and not env.PRIVATE.search(target) and target.endswith(('.zsh', '.sh')):
+        return call, target, prefix
+    return None
+
+
+def _setting_source_edges(files, loads, home, read_dependency):
+    """Resolve a local scalar binding on observed routes. Never follow arbitrary library code."""
+    env = state.environment
+    by_source = {f['source']['id']: f for f in files.values() if f['source']}
+    operations = {key: _bounded_operations(f) for key, f in by_source.items()}
+    for key, file in by_source.items():
+        spans = operations[key]
+        if not spans or len(spans) < 2:
+            continue
+        reference = _setting_source_reference(file, spans, home)
+        if reference is None:
+            continue
+        call, target, prefix = reference
+        # An earlier evaluator, attribute declaration or mutation could change HOME,
+        # the scalar binding, or builtin resolution. Accept only ordinary aliases
+        # before the binding on every route, and reject duplicate visits.
+        owners = [v for v in loads if v['source'] == key]
+        contexts = {v['context'] for v in owners}
+        if not owners or len(owners) != len(contexts) or any(v['parent'] is not None for v in owners):
+            continue
+        before = {v['context']: v['order'] for v in owners}
+        predecessors = {v['source'] for v in loads if v['context'] in before and v['order'] < before[v['context']]}
+        if any(operations[k] is None or 'alias' in by_source[k]['alias_names'] or set(operations[k]) !=
+               {tuple(site) for cmd, _, site in by_source[k]['commands'] if cmd == 'alias'} for k in predecessors):
+            continue
+        child = read_dependency(target)
+        child_spans = _bounded_operations(child)
+        if child['status'] not in ('observed', 'partial') or child_spans is None:
+            continue
+        commands, effects = set(), set()
+        for site in child_spans:
+            raw = child['raw'][slice(*site)]
+            command = raw.split(None, 1)[0]
+            effect, keys = env.setting_context(raw)
+            if command not in (b'setopt', b'unsetopt') or effect != 'dependency':
+                break
+            commands.add(command.decode())
+            effects.update(keys)
+        else:
+            file['setting_source_edges'] = {call: dict(source=child['source'], commands=commands, keys=effects)}
+            file['setting_source_bindings'] = prefix
+
+
+def _setting_layouts(files, loads):
+    """Fingerprint executable operations and literal load sites independently of outer trivia."""
+    sources_by_id = {f['source']['id']: f for f in files.values() if f['source']}
+    digests = {}
+    for key, file in sources_by_id.items():
+        spans = _bounded_operations(file)
+        if spans is None:
+            continue
+        settings = {tuple(span) for kind, _, _, span in file['environment'] if kind == 'setting'}
+        positions, units = [], []
+        for site in spans:
+            if site not in settings:
+                positions.append(site[0])
+                units.append(state.digest(file['raw'][slice(*site)]))
+                edge = file.get('setting_source_edges', {}).get(site)
+                if edge:
+                    units.append(state.digest(json.dumps(edge['source'], sort_keys=True).encode()))
+        file['setting_operations'] = positions
+        route_sites = {span[0] for cmd, _, span in file['commands'] if cmd in ('zdotdir', 'source')}
+        file['setting_context_code'] = any(pos not in route_sites for pos in positions)
+        digests[key] = state.digest(''.join(units).encode())
+
+    routes = {}
+    for context in CONTEXTS:
+        visits = [v for v in loads if v['context'] == context]
+        orders = {v['id']: i for i, v in enumerate(visits)}
+        records = []
+        runtime = requires_source = False
+        for visit in visits:
+            key, parent = visit['source'], visit['parent']
+            if key not in digests:
+                break
+            edge = None
+            if parent:
+                parent_index = orders[parent]
+                positions = sources_by_id[visits[parent_index]['source']]['setting_operations']
+                first = visit['site'][0]
+                index = bisect_left(positions, first)
+                if index == len(positions) or positions[index] != first:
+                    break
+                edge = [parent_index, index]
+            records.append([key, visit['entry'], visit['condition'], edge, digests[key]])
+            requires_source |= bool(sources_by_id[key].get('setting_source_edges'))
+            runtime |= any(effect == 'runtime' for _, _, effect, _ in sources_by_id[key]['setting_sites'])
+        else:
+            routes[context] = (state.digest(json.dumps([context, records], separators=(',', ':')).encode()), runtime, requires_source)
+    for key, file in sources_by_id.items():
+        contexts = sorted({v['context'] for v in loads if v['source'] == key})
+        if contexts and all(c in routes for c in contexts) and any(routes[c][1] for c in contexts):
+            file['setting_source_required'] = any(routes[c][2] for c in contexts)
+            file['setting_runtime_graph'] = state.digest(''.join(routes[c][0] for c in contexts).encode())
+
+
+def _setting_command(intent):
+    if intent['group'] == 'options':
+        return 'setopt' if intent['value'] else 'unsetopt'
+    if intent['group'] == 'keymaps':
+        return 'bindkey'
+    return None
+
+
+def _setting_sites(file):
+    """Index the parser's active outer spans once. This evidence stays private."""
+    known = ({tuple(site) for _, _, site in file['commands']} |
+             {tuple(details['span']) for _, _, details in file['units']})
+    bindings = {tuple(site): (kind, name, intent) for kind, name, intent, site in file['environment']}
+    for site in sorted(file['boundaries'] - known):
+        binding = bindings.get(site)
+        if binding is None:
+            raw = file['raw'][slice(*site)]
+            alias = base.typed_declaration(state.utf8(raw)) if raw.startswith(b'alias') else None
+            if alias and alias[0]['name'] in file['alias_names']:
+                # Duplicate ordinary bindings can be ineligible for B4 while
+                # their precise command names still participate in shadow checks.
+                yield site, {'alias'}, 'dependency', set()
+                continue
+            effect, keys = state.environment.setting_context(raw)
+            commands = {raw.split(None, 1)[0].decode()} if effect != 'unknown' else set()
+        else:
+            kind, name, intent = binding
+            if kind == 'setting':
+                commands = {_setting_command(intent)}
+                effect, keys = 'declaration', {name}
+            elif kind == 'initializer':
+                commands, effect, keys = set(), 'runtime', set()
+            else:
+                members = intent.get('members', [dict(declaration=intent)])
+                commands = {m['declaration']['form'] for m in members} - {'assignment'}
+                writes, reads = state.environment.parameter_uses(name, intent)
+                effect, keys = state.environment.setting_parameters(writes, reads)
+        yield site, commands, effect, keys
+
+
+def setting_issue(row, observed, *, adding=False, exact_sources=(), placement_matches=False):
+    """Qualify an explicit declaration on each observed route, without evaluating startup."""
+    visits = {v['id']: v for v in observed._loads}
+    points = {}
+    for key in row['loads']:
+        visit = visits[key]
+        context = visit['context']
+        if context in points or visit['condition'] == 'conditional':
+            return 'source_prerequisite'
+        points[context] = state.load_position(visits, key, row['details']['span'][0])
+    key = row['key']
+    group = row['details']['intent']['group']
+    if group == 'keymaps' and not points.keys() <= {'interactive', 'interactive-login'}:
+        return 'source_prerequisite'
+    active = {}
+    for visit in visits.values():
+        if visit['context'] in points:
+            active.setdefault(visit['source'], []).append(visit)
+    # Include failed roots/edges which could not yield a visit at all.
+    paths = {p for p in observed._roots if Path(p).name == '.zshenv' or
+             Path(p).name == '.zshrc' and points.keys() & {'interactive', 'interactive-login'} or
+             Path(p).name in ('.zprofile', '.zlogin') and points.keys() & {'login', 'interactive-login'}}
+    files = [f for f in observed._files.values() if f['source'] and f['source']['id'] in active]
+    paths.update(child for f in files for cmd, child, _ in f['commands'] if cmd == 'source')
+    paths.update(p for p, f in observed._files.items() if f['source'] and f['source']['id'] in active)
+    if any(path in paths and code not in ('unsupported_context', 'ambiguous_function', 'ambiguous_alias')
+           for path, code in observed._issues):
+        return 'source_prerequisite'
+    if any(observed._files.get(p, {}).get('status') not in ('missing', 'partial', 'observed') for p in paths):
+        return 'source_prerequisite'
+    if {v['id'] for v in visits.values() if v['source'] == row['source']} != set(row['loads']):
+        return 'source_prerequisite'
+    shadowed = {name for f in files for name in f['names'] + f['alias_names']}
+    if _setting_command(row['details']['intent']) in shadowed:
+        return 'source_prerequisite'
+    unbound_runtime = any(effect == 'runtime' and site not in f.get('setting_source_edges', ())
+                          and site not in f.get('setting_source_bindings', ())
+                          for f in files for site, _, effect, _ in f.get('setting_sites', ()))
+    owner_site = tuple(row['details']['span'])
+    for file in files:
+        if not file.get('all_outer_bounded') or any(n.startswith('TRAP') for n in file['names']):
+            return 'source_prerequisite'
+        source = file['source']['id']
+        for site, commands, effect, keys in file['setting_sites']:
+            if source == row['source'] and site == owner_site:
+                continue
+            if key in keys:
+                return 'target_conflict' if effect == 'declaration' else 'dependency_prerequisite'
+            if effect != 'unknown' and commands & shadowed:
+                if adding:
+                    return 'source_prerequisite'
+                effect = 'runtime'
+            if site in file.get('setting_source_bindings', ()):
+                if commands & shadowed or (effect == 'runtime' and unbound_runtime):
+                    return 'source_prerequisite'
+                continue
+            if effect in ('declaration', 'dependency'):
+                continue
+            if effect != 'runtime' or key == 'HISTFILE':
+                return 'source_prerequisite'
+            text = state.utf8(file['raw'][slice(*site)])
+            lookups = state.environment.setting_invocation_commands(text)
+            if state.environment.setting_source_operand(text):
+                edge = file.get('setting_source_edges', {}).get(site)
+                if (not edge or not row['details'].get('placement', {}).get('source_required')
+                        or (adding and not placement_matches) or edge['commands'] & shadowed):
+                    return 'source_prerequisite'
+                if key in edge['keys']:
+                    return 'dependency_prerequisite'
+                lookups = {text.split(None, 1)[0]}
+            if lookups & shadowed:
+                return 'source_prerequisite'
+            if adding and (not lookups or not (placement_matches or source in exact_sources and row['source'] in exact_sources)):
+                return 'source_prerequisite'
+            # A bounded external invocation can precede an explicit, self-contained
+            # declaration. Exact source evidence does not qualify later runtime
+            # effects or an intervening source command.
+            for visit in active[source]:
+                position = state.load_position(visits, visit['id'], site[0])
+                point = points[visit['context']]
+                if position >= point or len(point) > 2 and position < point[:-1]:
+                    return 'source_prerequisite'
+    return None
 
 
 def _shadows_source(names, commands):

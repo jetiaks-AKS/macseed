@@ -36,15 +36,16 @@ def parser(root):
 
 
 class Observation:
-    def __init__(self, root, *, environment=False):
+    def __init__(self, root, *, environment=False, settings=False):
         self.snapshot = None
         self.binding = None
         self._source_paths = ()
+        self._excluded = set()
         self.environment = None
         self.public = dict(status='unavailable', codes=[], restore_supported=True)
         try:
             helper = parser(root)
-            result = observe.observe(os.environ['HOME'], helper, aliases=True, independent=True, environment=environment)
+            result = observe.observe(os.environ['HOME'], helper, aliases=True, independent=True, environment=environment, settings=settings)
             self.public.update(status='observed' if any(r['kind'] in ('alias', 'function') for r in result.snapshot._value['items']) or not result.codes else 'unsupported',
                                codes=list(result.codes), uncertainties=list(result.uncertainties))
             loaded = {row['source'] for row in result._loads}
@@ -68,15 +69,19 @@ class Observation:
             try:
                 state.declaration_order(state.select(result.snapshot, [r['id'] for r in result.snapshot._value['items']
                     if r['kind'] in ('alias', 'function')]))  # Must have a portable Restore order.
-            except state.Invalid:
+            except state.Invalid as exc:
                 self.public.update(status='unsupported', codes=sorted(set(self.public['codes']) | {'ambiguous_function'}))
-                return
+                if not (environment and settings and str(exc) == 'shell_state_ambiguous_record'):
+                    return
+                # Ordering the B4 definitions failed. Only independently qualified
+                # v3 Settings can contribute inventory from this observation.
+                self._excluded.update(row['id'] for row in result.snapshot._value['items'] if row['kind'] != 'setting')
             raw, payloads = state.encode(result.snapshot)
             evidence = dict(parser=helper._manifest_sha256, snapshot=state.digest(raw),
                             payloads={k: state.digest(v) for k, v in payloads.items()},
                             files={p: dict(status=f['status'], stamp=f['stamp'],
                                            sha256=state.digest(f['raw']) if f['raw'] is not None else None)
-                                   for p, f in result._files.items()},
+                                   for p, f in result._inputs.items()},
                             loads=result._loads, uncertainties=result.uncertainties)
             self.binding = state.digest(json.dumps(evidence, sort_keys=True, separators=(',', ':')).encode())
             if environment:
@@ -84,6 +89,22 @@ class Observation:
                 if set(result.codes).intersection({'unsafe_source', 'source_unresolved', 'startup_unresolved',
                                                    'cyclic_source', 'ambiguous_source', 'ambiguous_source_command'}):
                     excluded.add('unqualified_source')
+                for row in result.snapshot._value['items']:
+                    if row['kind'] == 'setting':
+                        reason = observe.setting_issue(row, result)
+                        if not reason and row['key'] == 'HISTFILE':
+                            try:
+                                observe.sources.history_destination(os.environ['HOME'], row['details']['intent']['value'])
+                            except (ValueError, OSError):
+                                reason = 'unsafe_destination'
+                        if reason:
+                            self._excluded.add(row['id'])
+                            excluded.add('unqualified_setting')
+                    elif row['kind'] in state.environment.VARIABLE_KINDS:
+                        writes, reads = state.environment.parameter_uses(row['key'], row['details']['intent'])
+                        if (writes | reads) & state.environment.HISTORY:
+                            self._excluded.add(row['id'])
+                            excluded.add('special_parameter')
                 self.environment = dict(exclusions=sorted(excluded),
                                         available='environment_spans_unavailable' not in result.codes or
                                         any(r['kind'] in state.environment.KINDS for r in result.snapshot._value['items']))
@@ -91,7 +112,7 @@ class Observation:
                 if not self.environment['available']:
                     self.environment['explanations'].append('Variables & PATH requires the updated bundled shell parser.')
             self.snapshot = result.snapshot
-            self._source_paths = tuple(result._files)
+            self._source_paths = tuple(result._inputs)
         except (client.Invalid, observe.Invalid) as exc:
             if exc.code in ('cancelled', 'process_cleanup_failed'):
                 raise
@@ -117,6 +138,8 @@ class Observation:
                          if contexts[key] == 'interactive-login']
             return (1, min(positions) if positions else (), row['id'])
         for row in sorted(value['items'], key=order):
+            if row['id'] in self._excluded:
+                continue
             entry = dict(item_id=row['id'], label=row['key'], _source=row['id'])
             if row['kind'] in state.environment.KINDS:
                 info = state.environment.presentation(row, {contexts[k] for k in row['loads']}, sources[row['source']])
@@ -125,6 +148,7 @@ class Observation:
         return result
 
     def selected(self, ids, scripts=()):
+        state.require(not self._excluded.intersection(ids), 'selection_invalid')
         return state.encode(state.with_scripts(state.select(self.snapshot, ids), scripts))
 
     def validate_script_paths(self, ids, paths):

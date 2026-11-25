@@ -105,6 +105,8 @@ struct RestorePreviewPresentation {
                  "shell_directory_missing_prerequisite", "shell_directory_observation_prerequisite", "shell_dependency_missing_prerequisite",
                  "shell_dependency_observation_prerequisite", "shell_operand_unsupported_prerequisite", "shell_operand_prerequisite", "shell_selection_prerequisite":
                 reasonMessage = ShellCommandPresentation.dependencyExplanation(row.reason)!
+            case "shell_source_prerequisite" where CoreCaptureInventoryRow.Item.isSettingID(row.itemID):
+                reasonMessage = "Review the startup file for another setting, a conditional load or a dynamic command, then refresh."
             case "shell_source_prerequisite", "shell_startup_prerequisite": reasonMessage = "Source or path dependency unverified. Resolve it, then refresh."
             case "observation_failed": reasonMessage = "Current state could not be inspected reliably."
             case "target_conflict": reasonMessage = row.domain == "shell-zsh" && row.disposition == "blocked"
@@ -143,7 +145,9 @@ struct RestorePreviewPresentation {
             } else { declarationAction = nil }
             let action = declarationAction ?? row.assistedAppStoreItem?.message ?? row.unsupportedRepairExplanation ?? row.diagnostic?.explanation ?? reasonMessage ?? (row.authorizationRequired == true ? message + " · Administrator authorization required" : message)
             let conditional = ["workspace_dependency_pending", "workspace_commit_after_clone", "git_ssh_restore_pending"].contains(row.reason ?? "")
-            rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? (row.isSSHDependency ? "After Secure Transfer" : conditional ? "Conditional" : Self.readyText(action: row.action)) : nil, pathHelp: declarationHelp ?? script.map { "~/" + $0.path }))
+            rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? (row.isSSHDependency ? "After Secure Transfer" : conditional ? "Conditional" : Self.readyText(action: row.action)) : nil, pathHelp: declarationHelp ?? script.map { "~/" + $0.path },
+                shellSettingGroup: row.domain == "shell-zsh" && CoreCaptureInventoryRow.Item.isSettingID(row.itemID)
+                    ? detail?.settingGroup ?? ShellSettingGroup(referenceLabel: rawTitle) : nil))
         }
         categories = order.map { domain in
             DisplayCategory(id: domain, title: DeveloperSelectionGroup.label(domain, fallback: catalog.inventory.first { $0.id == domain }?.label ?? "Other supported state"), symbol: domain == CoreRestorePreparation.secureDomain ? "lock.shield" : "slider.horizontal.3", items: ShellDefinitionPresentation.ordered(rows[domain] ?? [], domain: domain, id: { identities[$0.id] ?? $0.id }, name: { $0.title }))
@@ -188,11 +192,14 @@ struct RestoreProgressRow {
         guard row.id == "shell-zsh" else { return row.title }
         let shell = DeveloperSelectionGroup.shell.title
         var titles = Set<String>()
-        for entry in plan.plan where entry.domain == row.id && entry.itemID != "scope" {
+        let requirements = plan.plan.filter { $0.domain == row.id && $0.itemID != "scope" }
+        let pending = requirements.filter { $0.disposition != "satisfied" }
+        for entry in pending.isEmpty ? requirements : pending {
             if ShellDefinitionPresentation.kind(entry.itemID) != nil { titles.insert("Aliases & Functions") }
             else if entry.itemID.hasPrefix("shell-script:") { titles.insert("Scripts") }
+            else if CoreCaptureInventoryRow.Item.isSettingID(entry.itemID) { titles.insert(DeveloperSelectionGroup.settingsTitle) }
             else if CoreCaptureInventoryRow.Item.isEnvironmentID(entry.itemID) { titles.insert("Variables & PATH") }
-            else { titles.insert(row.title == "Settings" ? "Settings" : shell) }
+            else { titles.insert(row.title == DeveloperSelectionGroup.settingsTitle ? DeveloperSelectionGroup.settingsTitle : shell) }
         }
         return titles.count == 1 ? titles.first! : shell
     }
@@ -336,8 +343,12 @@ struct RestoreProgressRow {
         Set(eligibleAreas.filter { $0.id == "shell-zsh" && $0.selectionMode == "items" }.flatMap { $0.items.map(\.id) }
             .filter { !CoreCaptureInventoryRow.Item.isEnvironmentID($0) })
     }
-    var shellEnvironmentItems: [CoreRestoreInspection.Item] {
+    var shellDeclarationItems: [CoreRestoreInspection.Item] {
         selectionAreas.first { $0.id == "shell-zsh" }?.items.filter { CoreCaptureInventoryRow.Item.isEnvironmentID($0.id) } ?? []
+    }
+    var shellEnvironmentItems: [CoreRestoreInspection.Item] { shellDeclarationItems.filter { $0.environment?.settingGroup == nil } }
+    var shellSettingItems: [CoreCaptureInventoryRow.Item] {
+        shellDeclarationItems.filter { $0.environment?.settingGroup != nil }.map { .init(itemID: $0.id, label: $0.label, environment: $0.environment) }
     }
     func selectShellItems(_ ids: Set<String>, included: Bool) {
         guard !busy, !runtime.isActive, state == .review else { return }
@@ -355,7 +366,7 @@ struct RestoreProgressRow {
         let additions = scripts.filter { !authorizedShellScripts.contains($0.id) }
         if included && !additions.isEmpty {
             shellParentConsent = ShellParentConsent(aliases: parentShellAliases, candidates: scripts, newScripts: additions,
-                environmentIDs: commandsOnly ? nil : Set(shellEnvironmentItems.map(\.id)))
+                environmentIDs: commandsOnly ? nil : Set(shellDeclarationItems.map(\.id)))
             return
         }
         shellParentConsent = nil
@@ -368,7 +379,7 @@ struct RestoreProgressRow {
         shellParentConsent = nil
         guard choice != .cancel, state == .review, !busy, !runtime.isActive,
               request.matches(aliases: parentShellAliases, candidates: parentShellScripts) else { return }
-        if let ids = request.environmentIDs, ids != Set(shellEnvironmentItems.map(\.id)) { return }
+        if let ids = request.environmentIDs, ids != Set(shellDeclarationItems.map(\.id)) { return }
         if request.selectAliases { selectShellItems(parentShellAliases.union(request.environmentIDs ?? []), included: true) }
         if choice == .includeScripts {
             for script in request.newScripts { selectShellScript(script.id, included: true) }
@@ -742,7 +753,7 @@ struct RestoreProgressRow {
         CoreRestoreSelection(categories: selectedCategories.sorted(), items: requirementItems.filter { !$0.value.isEmpty }.mapValues { $0.sorted() })
     }
     var selectedAreaCount: Int {
-        guard inspection?.requiredFeatures?["shell-state"] == 2 else {
+        guard [2, 3].contains(inspection?.requiredFeatures?["shell-state"] ?? 0) else {
             return selectedCategories.count + requirementItems.filter { !$0.value.isEmpty }.count
         }
         return CoreCaptureCounts.domains(categories: selectedCategories, items: selectedItems, scripts: authorizedShellScripts)
@@ -750,10 +761,10 @@ struct RestoreProgressRow {
     var selectedItemCount: Int { requirementItems.values.reduce(0) { $0 + $1.count } }
     var selectionCategoryCounts: (fully: Int, partially: Int, notSelected: Int) {
         var states = eligibleAreas.map(selectionState)
-        if !shellEnvironmentItems.isEmpty {
+        if !shellDeclarationItems.isEmpty {
             states = eligibleAreas.filter { $0.id != "shell-zsh" }.map(selectionState)
             let selected = selectedItems["shell-zsh"] ?? []
-            for ids in [Array(parentShellAliases), shellEnvironmentItems.map(\.id)] where !ids.isEmpty {
+            for ids in [Array(parentShellAliases), shellEnvironmentItems.map(\.id), shellSettingItems.map(\.itemID)] where !ids.isEmpty {
                 states.append(SelectionState.summarize(selected: selected, children: ids))
             }
             if !parentShellScripts.isEmpty {
@@ -979,6 +990,7 @@ struct RestoreProgressRow {
             guard runtime.capabilities?.supportsRestoreSelection == true else {
                 fail("Rebuild selection is unavailable in this build. Use a compatible Macseed version.", code: nil); return
             }
+            let settingsRecovery = runtime.capabilities?.supportsShellSettings == true
             let environmentRecovery = runtime.capabilities?.supportsEnvironmentRecovery == true
             sshResolutionSupported = runtime.capabilities?.supportsSSHResolution == true
             secureDestinationsSupported = runtime.capabilities?.supportsSecureRestoreDestinations == true
@@ -987,8 +999,10 @@ struct RestoreProgressRow {
             do {
                 guard let result = runtime.latestResult else { throw CoreRuntimeError.malformedEvent }
                 let data = try result.decodeData(CoreRestoreInspection.self)
-                if data.restoreSupported == false || (data.requiredFeatures?["shell-state"] == 2 &&
-                    !(data.restoreSupported == true && environmentRecovery)) {
+                let version = data.requiredFeatures?["shell-state"]
+                if data.restoreSupported == false ||
+                    (version == 3 && !(data.restoreSupported == true && settingsRecovery)) ||
+                    (version == 2 && !(data.restoreSupported == true && environmentRecovery)) {
                     fail("This version of Macseed cannot rebuild the requirements in this saved environment.", code: "unsupported_bundle")
                     return
                 }

@@ -5,7 +5,10 @@ import CryptoKit
 enum CoreCaptureCounts {
     static func shell(items: Set<String>, scripts: Set<String>) -> [String: Int] {
         let environment = items.filter(CoreCaptureInventoryRow.Item.isEnvironmentID).count
-        return ["aliases_functions": items.count - environment, "scripts": scripts.count, "variables_path": environment]
+        let settings = items.filter(CoreCaptureInventoryRow.Item.isSettingID).count
+        var counts = ["aliases_functions": items.count - environment, "scripts": scripts.count, "variables_path": environment - settings]
+        if settings > 0 { counts["settings"] = settings }
+        return counts
     }
     static func domains(categories: Set<String>, items: [String: Set<String>], scripts: Set<String>) -> Int {
         // Whole-category Shell retains the legacy single-domain meaning.
@@ -264,9 +267,10 @@ struct CoreCapturePreparation: Decodable {
               (shellEnvironment?.explanations ?? []).allSatisfy({ safeText($0, 200) }),
               inventory.allSatisfy({ row in row.items.allSatisfy { item in
                   let environmentID = CoreCaptureInventoryRow.Item.isEnvironmentID(item.itemID)
-                  guard let detail = item.environment else { return !environmentID }
+                  guard let detail = item.environment else { return !environmentID && !CoreCaptureInventoryRow.Item.isSettingID(item.itemID) }
                   return environmentID && row.domain == "shell-zsh" && shellEnvironment?.available == true
                       && safeText(item.label, 160) && detail.valid
+                      && (detail.settingGroup != nil) == CoreCaptureInventoryRow.Item.isSettingID(item.itemID)
               } }) else { throw CoreRuntimeError.malformedEvent }
         try secureIdentities.validate()
         let identities = expected?.secureIdentities ?? []
@@ -334,7 +338,7 @@ struct CoreCapturePublication: Decodable {
         var shellScriptCandidates: [CoreShellScript]? = nil
         var shellFunctionalCounts: [String: Int]? = nil
         var restoreSupported: Bool? = nil
-        var typedShell: Bool { [1, 2].contains(requiredFeatures?["shell-state"] ?? 0) }
+        var typedShell: Bool { [1, 2, 3].contains(requiredFeatures?["shell-state"] ?? 0) }
         enum CodingKeys: String, CodingKey {
             case formatVersion = "format_version", selectedCategories = "selected_categories"
             case selectedItemCounts = "selected_item_counts", secureComponent = "secure_component"
@@ -369,11 +373,13 @@ struct CoreCapturePublication: Decodable {
         try preparation.validate(expected: preparation.selection, expectedScripts: preparation.shellScriptSelection)
         let shellCounts = CoreCaptureCounts.shell(items: Set(preparation.publicationSelection?.items["shell-zsh"] ?? []),
             scripts: Set(preparation.shellScriptSelection ?? []))
-        let selectedEnvironment = (shellCounts["variables_path"] ?? 0) > 0
+        let settings = (shellCounts["settings"] ?? 0) > 0
+        let selectedEnvironment = settings || (shellCounts["variables_path"] ?? 0) > 0
         let selectedIDs = Set(preparation.publicationSelection?.items["shell-zsh"] ?? [])
         let captureOnly = preparation.inventory.flatMap(\.items).contains { selectedIDs.contains($0.itemID) && $0.environment?.captureOnly == true }
         guard CoreRestoreInspection.supportsBundleFeatures(bundle.requiredFeatures),
-              selectedEnvironment == (bundle.requiredFeatures?["shell-state"] == 2),
+              settings == (bundle.requiredFeatures?["shell-state"] == 3),
+              selectedEnvironment == ([2, 3].contains(bundle.requiredFeatures?["shell-state"] ?? 0)),
               bundle.shellFunctionalCounts == (selectedEnvironment ? shellCounts : nil),
               !selectedEnvironment || bundle.restoreSupported == !captureOnly else { throw CoreRuntimeError.malformedEvent }
         guard bundle.requiredFeatures?["shell-state"] == nil || bundle.typedShell,

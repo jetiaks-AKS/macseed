@@ -52,6 +52,18 @@ def launch_enforced(test, client, requirement):
 
 class ShellStateTests(unittest.TestCase):
     """Pure codec tests share the Shell harness; no helper build or HOME access."""
+    def test_settings_literal_contract_and_legacy_history(self):
+        env = state.environment
+        for text in ('setopt AUTO_CD BEEP', 'setopt NO_BEEP', 'setopt EXTENDED_GLOB', 'HISTSIZE=0',
+                     'SAVEHIST=1000001', 'HISTFILE="/tmp/history"', 'export HISTSIZE=50',
+                     'bindkey -M viins', "bindkey '^R' history-incremental-search-backward"):
+            with self.subTest(text=text), self.assertRaises(env.Excluded):
+                env.classify(text, settings=True)
+        self.assertEqual(env.classify('HISTSIZE=10000')[0], 'variable')
+        for text, value in [('HISTSIZE=1', 1), ('SAVEHIST=1000000', 1000000),
+                            ('HISTFILE="${HOME}/.zhistory"', '.zhistory'), ('bindkey -v', 'vi')]:
+            self.assertEqual(env.classify(text, settings=True)[2]['value'], value)
+
     def test_environment_words_paths_providers_and_privacy(self):
         env = state.environment
         def intent(text):
@@ -715,6 +727,363 @@ class ShellParser(unittest.TestCase):
             self.source_file(target, '.pyenv/shims/pyenv', b'# target shim\n')
             self.assertEqual(status(reset + init)['pyenv'], 'unverified')
 
+    def test_settings_options_partial_conflict_and_noop(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        source, target = self.observation_home(), self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        self.source_file(source, '.zshrc', b'setopt AUTO_CD\nunsetopt BEEP\nsetopt HIST_IGNORE_DUPS\n')
+        obs = functions.observe.observe(str(source), helper, aliases=True, independent=True, environment=True, settings=True)
+        rows = {r['key']: r for r in obs.snapshot._value['items']}
+        self.assertEqual(set(rows), {'AUTO_CD', 'BEEP', 'HIST_IGNORE_DUPS'})
+        value = functions.state.select(obs.snapshot, [rows[name]['id'] for name in ('AUTO_CD', 'BEEP')])
+        self.assertEqual(functions.state.decode(*functions.state.encode(value))._value['schema'], 3)
+        path = self.source_file(target, '.zshrc', b'setopt BEEP\n')
+        plan = lambda: functions.plan(value, str(target), helper=helper)
+        self.assertEqual({r['key']: s for r, s, _ in plan().rows}, {'AUTO_CD': 'missing', 'BEEP': 'differing'})
+        self.assertTrue(functions.publish(value, str(target), helper=helper))
+        self.assertEqual(path.read_bytes(), b'setopt BEEP\nsetopt AUTO_CD\n')
+        before = path.stat()
+        matching = functions.state.select(value, [rows['AUTO_CD']['id']])
+        self.assertFalse(functions.publish(matching, str(target), helper=helper))
+        self.assertEqual(path.stat().st_mtime_ns, before.st_mtime_ns)
+        path.write_bytes(b'setopt AUTO_CD\nunsetopt AUTO_CD\n')
+        self.assertNotEqual(next(s for r, s, _ in plan().rows if r['key'] == 'AUTO_CD'), 'matching')
+
+    def test_settings_item_scoped_startup(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        home = self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        block = (b'# MACSEED_B6_QA_BEGIN\nsetopt AUTO_CD\nunsetopt BEEP\nHISTSIZE=1000000\n'
+                 b'SAVEHIST=1000000\nbindkey -e\n# MACSEED_B6_QA_END\n')
+        prefix = b'setopt interactivecomments\n'
+        rc = self.source_file(home, '.zshrc', prefix + block)
+        profile = self.source_file(home, '.zprofile', b'')
+        def capture():
+            with patch.object(functions.capture, 'parser', return_value=helper), patch.dict(os.environ, HOME=str(home)):
+                return functions.capture.Observation(ROOT, environment=True, settings=True)
+        observation = capture()
+        settings = {row['key']: row['id'] for row in observation.snapshot._value['items'] if row['kind'] == 'setting'}
+        self.assertEqual(set(settings), {'AUTO_CD', 'BEEP', 'HISTSIZE', 'SAVEHIST', 'KEYMAP'})
+        ids = set(settings.values())
+        self.assertEqual({entry['item_id'] for entry in observation.entries()}, ids)
+        saved = functions.state.select(observation.snapshot, sorted(ids))
+        self.assertEqual([status for _, status, _ in functions.plan(saved, str(home), helper=helper).rows], ['matching'] * 5)
+        rc.write_bytes(prefix)
+        self.assertEqual([status for _, status, _ in functions.plan(saved, str(home), helper=helper).rows], ['missing'] * 5)
+        init = b'eval "$(starship init zsh)"\n'
+        brew = b'eval "$(/opt/homebrew/bin/brew shellenv zsh)"\n'
+        def admitted(observed=None):
+            if observed is None:
+                observed = capture()
+            self.assertIsNotNone(observed.snapshot, observed.public)
+            public = {entry['item_id'] for entry in observed.entries()}
+            return {r['key'] for r in observed.snapshot._value['items'] if r['kind'] == 'setting' and r['id'] in public}
+        def statuses():
+            return {r['key']: status for r, status, _ in functions.plan(saved, str(home), helper=helper).rows}
+        self.source_file(home, '.oh-my-zsh/oh-my-zsh.sh', b'setopt interactivecomments\n')
+        for before, login in ((init, brew),
+                (b'export ZSH="$HOME/.oh-my-zsh"\nZSH_THEME="fixture"\nplugins=(git)\nsource "$ZSH/oh-my-zsh.sh"\n', b''),
+                (b'source <(fzf --zsh)\neval "$(zoxide init zsh)"\n', b''),
+                (b'eval "$(fixture-tool initialize)"\n', b'')):
+            with self.subTest(before=before):
+                rc.write_bytes(before + prefix + block)
+                profile.write_bytes(login)
+                self.assertEqual(admitted(), set(settings))
+                self.assertEqual(set(statuses().values()), {'matching'})
+                rc.write_bytes(before + prefix)
+                plan = functions.plan(saved, str(home), helper=helper)
+                self.assertEqual({status for _, status, _ in plan.rows}, {'unverified'})
+                self.assertFalse(plan.writes)
+        profile.write_bytes(b'')
+        rc.write_bytes(init + block + b'HISTFILE="$HOME/.zsh_history"\n')
+        self.assertEqual(admitted(), set(settings))
+        rc.write_bytes(b"alias listing='ls'\nexport EDITOR=vi\n" + block)
+        with patch.object(functions.capture.state, 'declaration_order',
+                          side_effect=functions.capture.state.Invalid('ambiguous_record')):
+            self.assertEqual({entry['item_id'] for entry in capture().entries()}, ids)
+        for before, after, eligible in (
+                (b'', b'bindkey "^R" history-incremental-search-backward\n', set(settings) - {'KEYMAP'}),
+                (b'', b'unsetopt autOcd\n', set(settings) - {'AUTO_CD'}),
+                (b'', b'export MIRROR="$HISTSIZE"\n', set(settings) - {'HISTSIZE'}),
+                (b'export BEEP=quiet\n', b'', set(settings)),
+                (b'bindkey() { :; }\n', b'', set()),
+                (b'', b"alias twice='ls'\nalias twice='pwd'\n", set(settings)),
+                (b'', init, set()), (b'setopt aliases\n', b'', set()),
+                (b'eval "$computed"\n', b'', set()), (b'source "$ROOT/../.zshrc"\n', b'', set()),
+                (b'', b'HISTSIZE=10\n', set(settings) - {'HISTSIZE'})):
+            with self.subTest(before=before, after=after):
+                rc.write_bytes(before + prefix + block + after)
+                observed = capture()
+                self.assertEqual(admitted(observed), eligible)
+                if eligible != set(settings):
+                    with self.assertRaisesRegex(ValueError, 'selection_invalid'):
+                        observed.selected(sorted(ids))
+                self.assertEqual({k for k, v in statuses().items() if v == 'matching'}, eligible)
+        rc.write_bytes(b'bindkey() { :; }\nbindkey -e\n' + block.replace(b'bindkey -e\n', b''))
+        self.assertEqual(admitted(), set(settings) - {'KEYMAP'})
+        rc.write_bytes(b'bindkey "^R" history-incremental-search-backward\nsetopt BEEP\n')
+        plan = functions.plan(saved, str(home), helper=helper)
+        self.assertEqual({r['key']: status for r, status, _ in plan.rows}, {
+            'AUTO_CD': 'missing', 'BEEP': 'differing', 'HISTSIZE': 'missing', 'SAVEHIST': 'missing', 'KEYMAP': 'unverified'})
+        self.assertTrue(functions.publish(saved, str(home), helper=helper))
+        self.assertNotIn(b'bindkey -e', rc.read_bytes())
+        self.assertNotIn(b'unsetopt BEEP', rc.read_bytes())
+        recovered = functions.state.select(saved, [settings[k] for k in ('AUTO_CD', 'HISTSIZE', 'SAVEHIST')])
+        self.assertFalse(functions.publish(recovered, str(home), helper=helper))
+        # Redirected root, one literal source and an unrelated evaluator in its child.
+        self.source_file(home, '.zshenv', b'ZDOTDIR="$HOME/dots"\n')
+        parent = self.source_file(home, 'dots/.zshrc', b'source "$HOME/dots/prefs"\n')
+        child = self.source_file(home, 'dots/prefs', init + block)
+        self.assertEqual(admitted(), set(settings))
+        branch = capture()
+        selected = functions.state.select(branch.snapshot, [r['item_id'] for r in branch.entries()
+                                                            if r['item_id'].startswith('shell-setting:')])
+        child.write_bytes(b'# preserve this literal route\n')
+        self.assertTrue(functions.publish(selected, str(home), helper=helper))
+        self.assertEqual({s for _, s, _ in functions.plan(selected, str(home), helper=helper).rows}, {'matching'})
+        self.assertFalse(functions.publish(selected, str(home), helper=helper))
+        parent.write_bytes(init + parent.read_bytes())
+        self.assertEqual(admitted(), set())
+        parent.write_bytes(b'source "$HOME/dots/prefs"\n' * 2)
+        self.assertEqual(admitted(), set())
+        self.assertFalse(functions.plan(selected, str(home), helper=helper).writes)
+
+    def test_settings_restore_at_saved_sites_after_runtime(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        home = self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        prefix = b'eval "$(fixture-tool initialize)"\nsetopt interactivecomments\n# retained prefix\n'
+        declarations = b'setopt AUTO_CD\nunsetopt BEEP\nHISTSIZE=1000000\nSAVEHIST=1000000\nbindkey -e\n'
+        suffix = b'# retained suffix\n'
+        rc = self.source_file(home, '.zshrc', prefix + declarations + suffix)
+        with patch.object(functions.capture, 'parser', return_value=helper), patch.dict(os.environ, HOME=str(home)):
+            obs = functions.capture.Observation(ROOT, environment=True, settings=True)
+            saved = functions.state.decode(*obs.selected(sorted(entry['item_id'] for entry in obs.entries())))
+        self.assertEqual({r['key'] for r in saved._value['items']}, {'AUTO_CD', 'BEEP', 'HISTSIZE', 'SAVEHIST', 'KEYMAP'})
+        def plan():
+            return functions.plan(saved, str(home), helper=helper)
+        for start, end in ((prefix.replace(b'fixture-tool', b'another-tool'), suffix),
+                           (prefix + b'bindkey() { :; }\n', suffix),
+                           (b'eval "$computed"\n', suffix), (prefix, prefix + suffix)):
+            with self.subTest(start=start, end=end):
+                rc.write_bytes(start + end)
+                result = plan()
+                self.assertEqual({status for _, status, _ in result.rows}, {'unverified'})
+                self.assertFalse(result.writes)
+        # The old v3 contract cannot supply a receipt from observing the target.
+        legacy = functions.state.decode(*functions.state.encode(saved))
+        for row in legacy._value['items']:
+            placement = row['details'].pop('placement')
+            self.assertEqual(placement['slot'], 2)
+        rc.write_bytes(prefix)
+        self.assertFalse(functions.plan(legacy, str(home), helper=helper).writes)
+        self.assertEqual(plan().writes, {'.zshrc': prefix + declarations})
+        # Duplicate executable anchors change the operation sequence even at EOF.
+        rc.write_bytes(prefix + b'setopt interactivecomments\n')
+        self.assertFalse(plan().writes)
+        # An opposing value is preserved while independent settings remain recoverable.
+        rc.write_bytes(prefix + b'setopt BEEP\n')
+        result = plan()
+        self.assertEqual({row['key']: status for row, status, _ in result.rows},
+                         {key: 'differing' if key == 'BEEP' else 'missing'
+                          for key in ('AUTO_CD', 'BEEP', 'HISTSIZE', 'SAVEHIST', 'KEYMAP')})
+        rc.write_bytes(prefix + suffix)
+        result = plan()
+        self.assertEqual([(status, reason) for _, status, reason in result.rows], [('missing', 'add')] * 5)
+        self.assertEqual(result.writes, {'.zshrc': prefix + declarations + suffix})
+        self.assertTrue(functions.publish(saved, str(home), helper=helper))
+        self.assertEqual(rc.read_bytes(), prefix + declarations + suffix)
+        self.assertEqual({status for _, status, _ in plan().rows}, {'matching'})
+        self.assertFalse(functions.publish(saved, str(home), helper=helper))
+
+        # Even an exact reconstruction cannot authorize a known shadowed lookup.
+        shadow = b'fixture-tool() { :; }\n'
+        rc.write_bytes(shadow + prefix + declarations + suffix)
+        with patch.object(functions.capture, 'parser', return_value=helper), patch.dict(os.environ, HOME=str(home)):
+            obs = functions.capture.Observation(ROOT, environment=True, settings=True)
+        self.assertFalse(any(entry['item_id'].startswith('shell-setting:') for entry in obs.entries()))
+        # Exercise a historical selection captured before this shadow was checked.
+        saved = functions.state.select(obs.snapshot, [r['id'] for r in obs.snapshot._value['items'] if r['kind'] == 'setting'])
+        self.assertEqual({status for _, status, _ in plan().rows}, {'unverified'})
+        rc.write_bytes(shadow + prefix + suffix)
+        result = plan()
+        self.assertEqual(len(result.rows), 5)
+        self.assertEqual({status for _, status, _ in result.rows}, {'unverified'})
+        self.assertFalse(result.writes)
+
+    def test_symbolic_setting_source_qualification(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        home = self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        prefix = b'CONFIG_ROOT="${HOME}/settings"\n. "$CONFIG_ROOT/interactive.zsh"\n'
+        declaration = b'setopt AUTO_CD\n'
+        child = self.source_file(home, 'settings/interactive.zsh', b'setopt interactivecomments\n')
+        rc = self.source_file(home, '.zshrc', prefix + declaration)
+        def capture():
+            with patch.object(functions.capture, 'parser', return_value=helper), patch.dict(os.environ, HOME=str(home)):
+                return functions.capture.Observation(ROOT, environment=True, settings=True)
+        observed = capture()
+        ids = [r['item_id'] for r in observed.entries() if r['item_id'].startswith('shell-setting:')]
+        self.assertEqual(len(ids), 1)
+        with self.assertRaisesRegex(ValueError, 'content_invalid'):
+            observed.validate_script_paths(ids, ['settings/interactive.zsh'])
+        saved = functions.state.decode(*observed.selected(ids))
+        def plan():
+            return functions.plan(saved, str(home), helper=helper)
+        rc.write_bytes(prefix)
+        prepared = plan()
+        self.assertEqual(prepared.writes, {'.zshrc': prefix + declaration})
+        # Byte-identical replacement between Prepare and publication is stale.
+        replacement = self.source_file(home, 'replacement', child.read_bytes())
+        replacement.replace(child)
+        with self.assertRaisesRegex(ValueError, 'target_changed'):
+            functions.publish(saved, str(home), helper=helper, expected=prepared.evidence)
+        self.assertEqual(rc.read_bytes(), prefix)
+        for target in (b'unsetopt interactivecomments\n', b'setopt AUTO_CD\n',
+                       b'bindkey() { :; }\n', b'eval "$(fixture-tool initialize)"\n',
+                       b'source "$HOME/another.zsh"\n'):
+            with self.subTest(target=target):
+                child.write_bytes(target)
+                self.assertFalse(plan().writes)
+        rc.write_bytes(prefix + declaration)
+        self.assertFalse(set(ids) & {r['item_id'] for r in capture().entries()})
+        child.write_bytes(b'unsetopt interactivecomments\n')
+        self.assertEqual([status for _, status, _ in plan().rows], ['unverified'])
+        # A known option in the child affects only its own selection.
+        child.write_bytes(b'unsetopt AUTO_CD\n')
+        rc.write_bytes(prefix + declaration + b'unsetopt BEEP\n')
+        current = capture()
+        admitted = {r['item_id'] for r in current.entries()}
+        self.assertEqual([r['key'] for r in current.snapshot._value['items']
+                          if r['kind'] == 'setting' and r['id'] in admitted], ['BEEP'])
+        rc.write_bytes(prefix)
+        child.unlink()
+        self.assertFalse(plan().writes)
+        rc.write_bytes(prefix + declaration)
+        self.assertFalse(set(ids) & {r['item_id'] for r in capture().entries()})
+        replacement.write_bytes(b'setopt interactivecomments\n')
+        child.symlink_to(replacement)
+        rc.write_bytes(prefix)
+        self.assertFalse(plan().writes)
+        child.unlink()
+        child.write_bytes(b'setopt interactivecomments\n')
+        for altered in (b'', prefix + prefix, b'CONFIG_ROOT=other\n' + prefix,
+                        prefix.replace(b'settings', b'other'), b'alias export=false\n' + prefix,
+                        b'eval "$(fixture-tool initialize)"\n' + prefix):
+            with self.subTest(altered=altered):
+                rc.write_bytes(altered)
+                self.assertFalse(plan().writes)
+        rc.write_bytes(prefix)
+        shadow = self.source_file(home, '.zshenv', b"alias setopt='print'\n")
+        self.assertFalse(plan().writes)
+        shadow.write_bytes(b"alias source='print'\n")
+        rc.write_bytes(prefix.replace(b'. "$CONFIG_ROOT', b'source "$CONFIG_ROOT'))
+        self.assertFalse(plan().writes)
+        shadow.unlink()
+        rc.write_bytes(prefix)
+        # Old v3 rows can be decoded but cannot borrow a fresh edge receipt.
+        graph = saved._value['items'][0]['details']['placement']['graph']
+        for receipt in ({'graph': '0' * 64, 'slot': 2}, {'graph': graph, 'slot': 2}, None):
+            legacy = functions.state.decode(*functions.state.encode(saved))
+            details = legacy._value['items'][0]['details']
+            if receipt:
+                details['placement'] = receipt
+            else:
+                del details['placement']
+            self.assertFalse(functions.plan(legacy, str(home), helper=helper).writes)
+
+    def test_settings_placement_binds_loaded_operations_and_interior_anchor(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        home = self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        first = self.source_file(home, 'first.zsh', b"alias listing='ls'\n")
+        self.source_file(home, 'other.zsh', b"alias showdir='pwd'\n")
+        loads = b'source "$HOME/first.zsh"\nsource "$HOME/other.zsh"\n'
+        profile = self.source_file(home, '.zprofile', loads)
+        init = b'eval "$(fixture-tool initialize)"\n'
+        setting = b'setopt AUTO_CD\n'
+        suffix = b'setopt interactivecomments\n'
+        rc = self.source_file(home, '.zshrc', init + b'# wrapper\n' + setting + suffix)
+        with patch.object(functions.capture, 'parser', return_value=helper), patch.dict(os.environ, HOME=str(home)):
+            obs = functions.capture.Observation(ROOT, environment=True, settings=True)
+            selected = [e['item_id'] for e in obs.entries() if e['item_id'].startswith('shell-setting:')]
+            self.assertEqual(len(selected), 1)
+            raw, payloads = obs.selected(selected)
+        saved = functions.state.decode(raw, payloads)
+        receipt = saved._value['items'][0]['details']['placement']
+        self.assertEqual(receipt['slot'], 1)
+        for invalid in ({'graph': 'invalid', 'slot': 1}, dict(receipt, slot=True), dict(receipt, slot=513),
+                        dict(receipt, source_required=False)):
+            malformed = functions.state.decode(raw, payloads)
+            malformed._value['items'][0]['details']['placement'] = invalid
+            with self.assertRaises(functions.state.Invalid):
+                functions.state.encode(malformed)
+        def plan():
+            return functions.plan(saved, str(home), helper=helper)
+        rc.write_bytes(init + suffix)
+        profile.write_bytes(b'# relocated load sites\n' + loads)
+        self.assertEqual(plan().writes, {'.zshrc': init + setting + suffix})
+        early = plan()
+        rc.write_bytes(b'# changed after prepare\n' + init + suffix)
+        with self.assertRaisesRegex(ValueError, 'target_changed'):
+            functions.publish(saved, str(home), helper=helper, expected=early.evidence)
+        self.assertEqual(rc.read_bytes(), b'# changed after prepare\n' + init + suffix)
+        for altered in (b''.join(reversed(loads.splitlines(keepends=True))), loads + loads):
+            profile.write_bytes(altered)
+            self.assertFalse(plan().writes)
+        profile.write_bytes(loads)
+        first.write_bytes(b"alias listing='du'\n")
+        self.assertFalse(plan().writes)
+        first.write_bytes(b"alias listing='ls'\n")
+        rc.write_bytes(b'export EDITOR=vi\n' + suffix)
+        self.assertFalse(plan().writes)
+
+    def test_settings_history_and_keymap_conflicts(self):
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        source, target = self.observation_home(), self.observation_home()
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        self.source_file(source, '.zshrc', b'HISTSIZE=5000\nHISTFILE="$HOME/.zsh_history"\nbindkey -v\n')
+        def observed(home):
+            return functions.observe.observe(str(home), helper, aliases=True, independent=True, environment=True, settings=True)
+        value = observed(source).snapshot
+        legacy = functions.observe.observe(str(source), helper, aliases=True, independent=True, environment=True).snapshot
+        self.assertEqual(legacy._value['schema'], 2)
+        historical = functions.state.decode(*functions.state.encode(legacy))
+        self.assertTrue(all(status == 'unverified' for _, status, _ in functions.plan(historical, str(source), helper=helper).rows))
+        with patch.object(functions.capture, 'parser', return_value=helper), patch.dict(os.environ, HOME=str(source)):
+            old_client = functions.capture.Observation(ROOT, environment=True)
+            self.assertFalse(any(i.get('environment') for i in old_client.entries()))
+            (source / '.zsh_history').symlink_to(source / '.zshrc')
+            fresh = functions.capture.Observation(ROOT, environment=True, settings=True)
+            self.assertFalse(any(i['label'].startswith('HISTFILE') for i in fresh.entries()))
+            rejected = next(r['id'] for r in fresh.snapshot._value['items'] if r['key'] == 'HISTFILE')
+            with self.assertRaisesRegex(ValueError, 'selection_invalid'):
+                fresh.selected([rejected])
+        rc = self.source_file(target, '.zshrc', b'HISTSIZE=1000\nbindkey -e\n')
+        history = target / '.zsh_history'
+        history.symlink_to(rc)
+        plan = functions.plan(value, str(target), helper=helper)
+        self.assertEqual({r['key']: s for r, s, _ in plan.rows},
+                         {'HISTSIZE': 'differing', 'KEYMAP': 'differing', 'HISTFILE': 'unverified'})
+        self.assertFalse(plan.writes)
+        for override in (b'bindkey -e\n', b'bindkey "^R" history-incremental-search-backward\n'):
+            self.source_file(target, '.zlogin', override)
+            rc.write_bytes(b'bindkey -v\n')
+            plan = functions.plan(value, str(target), helper=helper)
+            self.assertIn(next(s for r, s, _ in plan.rows if r['key'] == 'KEYMAP'), ('unverified', 'differing'))
+        history.unlink()
+        history.write_bytes(b'alias private_fixture=ls\n')
+        rc.write_bytes(b'source "$HOME/.zsh_history"\n')
+        result = observed(target)
+        self.assertIsNone(result._files['.zsh_history']['raw'])
+        self.assertIn('unsafe_source', result.codes)
+
     def test_environment_repeated_sources_guards_and_attributes(self):
         if not self.enforcing():
             self.skipTest('Requires enforced parser launch')
@@ -1312,7 +1681,7 @@ class ShellParser(unittest.TestCase):
         _, value, payloads = self.observed(home, aliases=True, independent=True, environment=True)
         b5 = [i for i in value['items'] if i['kind'] in state.environment.KINDS]
         rows = {i['key']: i for i in b5}
-        self.assertEqual({r['kind'] for r in b5}, set(state.environment.KINDS))
+        self.assertEqual({r['kind'] for r in b5}, set(state.environment.VARIABLE_KINDS))
         self.assertTrue({'ROOT','BIN','path','PATH','tools','map','JOBS','LOCK','EMPTY','BARE','PREVIOUS','FIRST',
                          'GUARDED','PREF','LITERAL','LANG','Homebrew'} <= set(rows), sorted(rows))
         self.assertFalse({'SECOND','LOCAL','COLOR','BAD','badlist','BADURL','OPAQUE','MAP','COPIED','CHAIN','SHOULD_STAY_PRIVATE'} & set(rows))

@@ -93,6 +93,29 @@ struct DisplayItem: Identifiable, Equatable {
     var restoreReadyText: String? = nil
     var restoreActivity: String? = nil
     var pathHelp: String? = nil
+    var shellSettingGroup: ShellSettingGroup? = nil
+}
+
+extension ShellSettingGroup {
+    static func sections<Item>(_ items: [Item], by group: KeyPath<Item, ShellSettingGroup?>)
+        -> [(group: Self, items: [Item])] {
+        allCases.compactMap { category in
+            let members = items.filter { $0[keyPath: group] == category }
+            return members.isEmpty ? nil : (category, members)
+        }
+    }
+
+    // Check supplies the saved declaration label, while inventory supplies the typed group.
+    init?(referenceLabel: String) {
+        let fields = referenceLabel.components(separatedBy: " — ")
+        guard fields.count == 2 else { return nil }
+        switch fields[0] {
+        case "AUTO_CD", "BEEP", "HIST_IGNORE_DUPS", "HIST_IGNORE_SPACE", "HIST_REDUCE_BLANKS": self = .options
+        case "HISTSIZE", "SAVEHIST", "HISTFILE": self = .history
+        case "Keymap": self = .keymaps
+        default: return nil
+        }
+    }
 }
 
 // Only validated HOME-relative Script paths reach this display projection.
@@ -116,6 +139,37 @@ struct DisplayCategory: Identifiable, Equatable {
     let items: [DisplayItem]
 }
 
+// Render the saved intent exposed in Core's label. Source bytes stay in the Bundle.
+struct ShellSettingPresentation {
+    let title: String
+    let declaration: String
+
+    init?(id: String, label: String) {
+        guard CoreCaptureInventoryRow.Item.isSettingID(id) else { return nil }
+        let fields = label.components(separatedBy: " — ")
+        guard fields.count == 2 else { return nil }
+        let key = fields[0], value = fields[1]
+        switch key {
+        case "AUTO_CD", "BEEP":
+            guard value == "Enabled" || value == "Disabled" else { return nil }
+            let enabled = value == "Enabled"
+            title = (key == "AUTO_CD" ? "Automatic directory change" : "Terminal bell") + (enabled ? " — On" : " — Off")
+            declaration = (enabled ? "setopt " : "unsetopt ") + key
+        case "HISTSIZE", "SAVEHIST":
+            guard let limit = Int(value), limit > 0, String(limit) == value else { return nil }
+            let number = limit.formatted(.number.locale(Locale(identifier: "en_US")))
+            title = (key == "HISTSIZE" ? "History in memory" : "Saved history limit") + " — " + number
+            declaration = key + "=" + value
+        case "Keymap":
+            guard value == "Emacs" || value == "Vi" else { return nil }
+            title = "Editing mode — " + value
+            declaration = value == "Emacs" ? "bindkey -e" : "bindkey -v"
+        default:
+            return nil
+        }
+    }
+}
+
 // Native display only. Never reorder Core records, selections or source bytes.
 enum ShellDefinitionPresentation {
     static func kind(_ identity: String) -> String? {
@@ -125,7 +179,9 @@ enum ShellDefinitionPresentation {
         return nil
     }
     static func title(domain: String, id: String, name: String) -> String {
-        guard domain == "shell-zsh", let kind = kind(id) else { return name }
+        guard domain == "shell-zsh" else { return name }
+        if let setting = ShellSettingPresentation(id: id, label: name) { return setting.title }
+        guard let kind = kind(id) else { return name }
         let prefix = kind + ": "
         if name.hasPrefix(prefix) { return name }
         let missing = ["Shell alias", "Shell function", "Private item", id].contains(name)

@@ -183,6 +183,9 @@ struct CaptureView: View {
                             .disabled(model.environmentItems.isEmpty || runtime.isActive)
                             .help("Select these declarations for plaintext capture.")),
                         environmentItems: model.environmentItems.isEmpty && model.environmentNotes.isEmpty ? nil : AnyView(environmentRows),
+                        settingsStatus: AnyView(shellSettings.parentStatus),
+                        settingsSelection: shellSettings.checkbox(model.settingItems, title: DeveloperSelectionGroup.settingsTitle),
+                        settingsItems: shellSettings.rows(expanded: treeExpansion),
                         shellCommandsSelection: AnyView(NativeSelectionCheckbox("", state: model.developerGroupState(.shell, commandsOnly: true),
                             accessibilityTitle: "Select Custom Commands", mixedSelectsAll: false) { model.selectShellParent(included: $0) }
                             .disabled(!model.customCommandsAvailable || runtime.isActive)),
@@ -214,7 +217,8 @@ struct CaptureView: View {
                     if selection.items["shell-zsh"]?.contains(where: CoreCaptureInventoryRow.Item.isEnvironmentID) == true {
                         Text(model.environmentItems.contains { $0.environment?.captureOnly == true }
                             ? "Variables & PATH will be saved as plaintext. Rebuild and Check are unavailable for this bundle."
-                            : "Variables & PATH will be saved as plaintext.")
+                            : (selection.items["shell-zsh"]?.contains(where: CoreCaptureInventoryRow.Item.isSettingID) == true
+                                ? "Selected Shell declarations will be saved as plaintext." : "Variables & PATH will be saved as plaintext."))
                             .font(.callout).foregroundStyle(.secondary)
                     }
                     if let duplicates = prepared.applicationDuplicates, !duplicates.isEmpty {
@@ -329,6 +333,9 @@ struct CaptureView: View {
             panel.begin { response in if response == .OK, let url = panel.url { model.addSSHIdentity(url) } }
         }
     }
+    private var shellSettings: ShellSettingsSelection {
+        ShellSettingsSelection(items: model.settingItems, selected: model.selectedItems["shell-zsh"] ?? [], select: model.selectDeclarations)
+    }
     private var environmentRows: some View {
         VStack(alignment: .leading, spacing: 0) {
             if !model.environmentItems.isEmpty {
@@ -353,7 +360,7 @@ struct CaptureView: View {
         }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset + 2 * CaptureReviewPresentation.hierarchyStep).padding(.trailing, 16)
     }
     private func disclosureIDs(in scope: CaptureSelectionScope) -> Set<String> {
-        let ids = model.categories.map(\.id) + [CaptureHierarchy.secureTransferID]
+        let ids = model.categories.map(\.id) + [CaptureHierarchy.secureTransferID] + shellSettings.disclosureIDs
             + (model.supportsManualScripts || model.categories.contains { $0.id == "shell-zsh" && $0.itemSelectable } ? [ShellCommandPresentation.commandsID] : [])
             + (model.environmentItems.isEmpty && model.environmentNotes.isEmpty ? [] : [DeveloperSelectionGroup.environmentID])
             + (model.supportsManualScripts || !model.shellScriptCandidates.isEmpty ? [ShellCommandPresentation.scriptsID] : [])

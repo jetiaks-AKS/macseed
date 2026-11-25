@@ -148,7 +148,7 @@ The approved target grouping is:
 - **For Experienced Users (Selection only, awaiting visual review):** four equal
   sibling groups: **Git** (Configuration, Repositories / Worktrees), **SSH**
   (Configuration, SSH Keys), **Workspace** (Folders, VS Code Workspace), and
-  **Shell** (Aliases & Functions; legacy snapshots under Settings). Each has an orange title, leading disclosure and
+  **Shell** (Aliases & Functions; legacy snapshots under Shell Settings). Each has an orange title, leading disclosure and
   native aggregate checkbox/status. Child categories remain independent. This
   projection does not change the shared taxonomy or any read-only screen.
 
@@ -1433,7 +1433,7 @@ Details use two Check-specific read-only sections, with no selection controls:
 - **For Experienced Users:** Git (Git Configuration, Git Repositories / Worktrees),
   Workspace (Workspace Folders, VS Code Workspace), SSH (SSH Configuration, SSH Keys),
   Shell → Custom Commands (separate Aliases & Functions and Scripts categories;
-  legacy snapshots under Settings), in that order.
+  legacy snapshots under Shell Settings), in that order.
 
 Only evidenced categories appear; empty parents are omitted. Unknown future domains
 retain their original names/evidence at the end of Standard Setup. Section headers
@@ -1531,7 +1531,7 @@ Their parent selects/clears every eligible definition with None/Partial/All stat
 Qualified typed observation and mixed inventories retain explicit
 `shell-alias:`/`shell-function:` IDs even when all are selected. Legacy-only Alias
 inventories retain supported whole-category selection; subsets retain exact IDs.
-Other domains still use compact category selection and legacy whole-file Shell remains Settings.
+Other domains still use compact category selection and legacy whole-file Shell uses Shell Settings.
 Capture Confirmation reports Alias/Function counts. Core's unavailable/unsupported
 Function observation is shown in the existing Shell row and selected-scope confirmation.
 **Functions unavailable** denotes missing observation capability; **Functions excluded**
@@ -1554,8 +1554,13 @@ remain unselected with sanitized reasons. Ordinary alias selection survives a
 script rejection. Cancel stops the pending check and permits retry without Scan.
 Known rejected files remain explained and outside the eligible parent scope.
 
-**Variables & PATH** and **Custom Commands** are sibling categories under Shell.
-Shell selects all eligible children of both categories. Variables & PATH selects
+The operator accepted the Shell Settings presentation in the [controlled real-Mac workflow](qualification/SHELL-SETTINGS-B6A-2026-11-25.md).
+Shell groups **Custom Commands**, **Variables & PATH** and **Shell Settings**. Capture
+and Rebuild show Shell Settings when supported items exist. Its populated Shell Options,
+History and Key Bindings groups share the existing selection and disclosure controls.
+Clicking a mixed Settings subgroup selects all its eligible items. Item Info shows
+the startup context and origin. A setting counts once in Preview, Result and Check.
+Shell selects all eligible children. Variables & PATH selects
 only its listed declarations and initializers. Either action authorizes the exact
 selected IDs for plaintext Capture. Individual declaration checkboxes operate
 independently. Only adding executable Scripts requires a separate decision. Item Info shows Core’s explanation, startup context and origin.
@@ -1567,9 +1572,9 @@ Desktop binds the validated v2 Bundle inventory to the recovery capability of
 the active Core. Selection and Preview show the saved startup context and
 destination. Prepared item-local skips retain their own Result and Check outcomes.
 A fresh Preview with no executable changes leaves Rebuild unavailable.
-The [controlled mixed real-Mac workflow](qualification/SHELL-VARIABLES-PATH-2026-11-20.md#controlled-real-mac-acceptance) passed. Progress uses one flat Shell row for a mixed selection and the selected category name for a single qualified category. **Settings** remains planned; **Plugins & Themes** is conditional
+The [controlled mixed real-Mac workflow](qualification/SHELL-VARIABLES-PATH-2026-11-20.md#controlled-real-mac-acceptance) passed. Progress uses one flat Shell row for a mixed selection and the selected category name for a single qualified category. **Plugins & Themes** is conditional
 on useful Core support and relevant items. Empty future categories are hidden.
-Historical whole-file snapshots retain **Shell → Settings → Saved Zsh file**, their
+Historical whole-file snapshots retain **Shell → Shell Settings → Saved Zsh file**, their
 `shell-zsh` identity and behavior. Source files, ZDOTDIR and dependency directories
 do not become disclosure levels. There is no extra Zsh Configuration wrapper.
 
@@ -1627,8 +1632,9 @@ Swift never reads bodies. Each selected v5 script has its own Selection/Preview
 identity, including an alias-linked file; repeated discoveries never add another
 file item. An independently selected v4/v5 file without selected aliases has one
 Core-qualified file identity in the same Shell module. Its Preview row stays under
-Scripts. Progress/Result use flat rows within their two static sections; Result
-separates Aliases & Functions from Scripts, and Check reports file conformity.
+Scripts. Rebuild Progress keeps a flat execution row. Rebuild Result groups visible
+requirements under Shell, with Aliases & Functions and Scripts under Custom Commands,
+Variables & PATH, and the populated Shell Settings subgroups. Check reports file conformity.
 Selection keeps one visible safety line: **Script files are saved unencrypted.**
 in Capture; **Restore trusted scripts only. They may run later.** in Rebuild.
 The warning is inside expanded Scripts only. Collapsed Scripts shows the ordinary
@@ -1643,8 +1649,8 @@ picks can come from different folders. Core qualifies and deduplicates files; ne
 candidates remain unchecked. V5 includes recognized non-executable Shell/Python
 files without changing their original modes. There is no Scan Folder button.
 
-Capture Selection, Confirmation and Result count Aliases & Functions, Scripts and
-Variables & PATH as independent functional domains when they contain selected items. They keep
+Capture Selection, Confirmation and Result count Aliases & Functions, Scripts,
+Variables & PATH and Settings as independent functional domains when they contain selected items. They keep
 one physical Shell module. Each selected definition, declaration, initializer and
 unique script file contributes one Selected Item, including files referenced by aliases.
 Manual/automatic discoveries of the same file count once. Result derives functional

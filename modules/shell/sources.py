@@ -52,7 +52,7 @@ def reference(word, home):
 
 @contextmanager
 def parent(home, path, *, read_only=False):
-    if not portable(path):
+    if not portable(path) or history_path(path):
         raise base.Invalid('unsafe_source_path')
     with base.home_directory(home) as (root, home_check):
         fd, opened, links = root, [], []
@@ -97,6 +97,36 @@ def parent(home, path, *, read_only=False):
         finally:
             for child in reversed(opened):
                 os.close(child)
+
+
+def history_path(path):
+    return Path(path).name.casefold() in {'.zsh_history', '.zhistory'}
+
+
+def history_destination(home, name):
+    """Qualify a conventional HOME history entry without reading any file bytes."""
+    if name not in ('.zsh_history', '.zhistory'):
+        raise base.Invalid('unsafe_destination')
+    with base.home_directory(home) as (directory, stable):
+        try:
+            before = os.stat(name, dir_fd=directory, follow_symlinks=False)
+        except FileNotFoundError:
+            stable()
+            return None
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid() or
+                before.st_nlink != 1 or before.st_mode & 0o022 or before.st_flags):
+            raise base.Invalid('unsafe_destination')
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        try:
+            base.acl_safe(fd)
+            signature = base.stamp(before)[:7]
+            if (signature != base.stamp(os.fstat(fd))[:7] or
+                    signature != base.stamp(os.stat(name, dir_fd=directory, follow_symlinks=False))[:7]):
+                raise base.Invalid('target_changed')
+            stable()
+            return signature
+        finally:
+            os.close(fd)
 
 
 def file_state(home, path, ignore_pending=(), *, limit=base.MAX_BYTES):

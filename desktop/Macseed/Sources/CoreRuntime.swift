@@ -34,6 +34,7 @@ extension CoreSecureChallenge: Identifiable {
     @Published private(set) var secureChallenge: CoreSecureChallenge?
     @Published private(set) var secureCancellationRequested = false
     private var secureReply: (@Sendable (CoreSecureResponse) -> Void)?
+    private(set) var shellSettingsSupported = false
     private(set) var environmentCaptureSupported: Bool?
     private(set) var bundleComparisonSupported: Bool?
     private(set) var secureCheckSupported = false
@@ -85,7 +86,7 @@ extension CoreSecureChallenge: Identifiable {
 
     func start(_ request: CoreRequest, location: CoreLocation? = nil) {
         guard !isActive else { return }
-        if request.command.operation == .capabilities { bundleComparisonSupported = nil; secureCheckSupported = false; environmentCaptureSupported = nil }
+        if request.command.operation == .capabilities { bundleComparisonSupported = nil; secureCheckSupported = false; environmentCaptureSupported = nil; shellSettingsSupported = false }
         state = .launching
         operationID = request.operationID
         operation = request.command.operation
@@ -223,6 +224,7 @@ extension CoreSecureChallenge: Identifiable {
                     homebrewGracefulSupported = value.features?["homebrew_graceful_stop"]?.object?["version"]?.integer == 1
                     capabilities = value
                     coreProductVersion = value.productVersion // Header metadata is sanitized on the log queue.
+                    shellSettingsSupported = value.supportsShellSettings
                     environmentCaptureSupported = value.supportsEnvironmentCapture
                     bundleComparisonSupported = value.supportsBundleComparison
                     secureCheckSupported = value.supportsSecureCheck

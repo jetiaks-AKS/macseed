@@ -39,11 +39,11 @@ Joint real-Mac SSH E2E and current Secure Check hosted CI
 qualification remain open. Continuing Homebrew, remaining 16I/16K,
 Stage 3C recovery and Stage 17 distribution qualification remain open. Existing
 durable journals, Stop and safety fences remain implemented. Unified UI Scenario
-Catalog is deferred tooling. B4 Custom Commands and B5 Variables & PATH have
-controlled real-Mac functional acceptance. B5 hosted CI and packaged clean-Mac
-qualification remain open. Shell Settings and
-qualified Plugins & Themes continue the pre-1.0 Shell work, followed by Stage 3C
-Recovery, remaining Stage 16 functionality, Stage 17 distribution, final comprehensive
+Catalog is deferred tooling. B4 Custom Commands, B5 Variables & PATH and B6A Shell Settings have
+controlled real-Mac functional acceptance. The final B6A Native UI is visually
+accepted. B5/B6A hosted CI and packaged clean-Mac qualification remain open.
+Further Shell integrations require a separate product decision. Stage 3C Recovery
+precedes remaining Stage 16 functionality, Stage 17 distribution, final comprehensive
 qualification and Early Access / 1.0. Fast/Full CI separation is deferred; retain all
 mandatory coverage. Follow the current
 [execution order](ROADMAP.md#current-practical-execution-order), one checkpoint

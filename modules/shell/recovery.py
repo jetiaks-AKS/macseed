@@ -157,7 +157,7 @@ def expand_request(value, *, max_declarations):
             if (value['operation'] not in ('restore_prepare', 'restore_execute', 'secure_restore_compare')
                     or len(items) > max_declarations + MAX_FILES
                     or not all(isinstance(item, str) and base.re.fullmatch(
-                        r'shell-(?:alias|function|variable|path-operation|initializer|script):[0-9a-f]{64}', item)
+                        r'shell-(?:alias|function|variable|path-operation|initializer|setting|script):[0-9a-f]{64}', item)
                                for item in items) or len(set(items)) != len(items)):
                 raise base.Invalid('invalid_script_request')
             files = sum(item.startswith('shell-script:') for item in items)

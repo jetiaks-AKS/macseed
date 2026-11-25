@@ -114,9 +114,9 @@ class BundleTests(unittest.TestCase):
             with self.assertRaises(bundle.Invalid):
                 bundle.inspect_bundle(corrupt, '/Users/unused')
 
-        for feature in ({'shell-state': 3}, {'shell-state': True}, {'future-feature': 1}):
+        for feature in ({'shell-state': 4}, {'shell-state': True}, {'future-feature': 1}):
             reject(feature, error=bundle.Unsupported)
-        for feature in ({}, {'shell-state': 2}, {'shell-aliases': 1}, {'shell-state': 1, 'shell-aliases': 5}):
+        for feature in ({}, {'shell-state': 2}, {'shell-state': 3}, {'shell-aliases': 1}, {'shell-state': 1, 'shell-aliases': 5}):
             reject(feature)
         reject(feature_wire=b'{"shell-state": 2, "shell-state": 1}')
         reject(remove=state.DEFINITIONS)

@@ -110,6 +110,24 @@ def order_conflicts(expected, observed):
     return conflicts
 
 
+def saved_setting_offsets(original, missing, payloads, source):
+    """Use saved line positions only if inserting the selected bytes recreates the saved source."""
+    if any(row['kind'] != 'setting' for row in missing):
+        return {}
+    offsets, inserted, previous = {}, 0, 0
+    for row in sorted(missing, key=lambda r: r['details']['span']):
+        key = row['id']
+        offset = row['details']['span'][0] - inserted
+        if not previous <= offset <= len(original) or (offset and original[offset-1:offset] != b'\n'):
+            return {}
+        previous = offsets[key] = offset
+        inserted += len(payloads[key]) + 1
+    if len(original) + inserted != source['size']:
+        return {}
+    candidate = sources.inserted_content(original, [(offset, payloads[key] + b'\n') for key, offset in offsets.items()])
+    return offsets if state.digest(candidate) == source['sha256'] else {}
+
+
 class Plan:
     def __init__(self, value, home, *, helper=None, cancelled=lambda: False, ignore_pending=()):
         raw, payloads = state.encode(value)
@@ -121,7 +139,8 @@ class Plan:
         self.skipped = set()
         self.pending_dependencies = set()
         self.observable_absences = set()
-        self.environment = value._value['schema'] == 2
+        self.environment = value._value['schema'] >= 2
+        self.settings = value._value['schema'] == 3
         self.observed = None
         self.helper = helper
         self.evidence = None
@@ -140,13 +159,13 @@ class Plan:
             if any(r['kind'] != 'script' for r in value._value['items']):
                 self.helper = helper or capture.parser(ROOT)
                 self.observed = observe.observe(home, self.helper, cancelled=self._check, _ignore_pending=ignore_pending, aliases=True, independent=True,
-                                                _additional_sources=(MANAGED_PATH,), environment=self.environment)
+                                                _additional_sources=(MANAGED_PATH,), environment=self.environment, settings=self.settings)
                 inputs.update(parser=self.helper._manifest_sha256,
                     files={p: dict(status=f['status'], stamp=f['stamp'], digest=state.digest(f['raw']) if f['raw'] is not None else None)
-                           for p, f in self.observed._files.items()}, loads=self.observed._loads)
+                           for p, f in self.observed._inputs.items()}, loads=self.observed._loads)
             if self.scripts is not None:
                 self.script_plan = state.legacy().plan(self.scripts, home,
-                    source_files=self.observed._files if self.observed is not None else None)
+                    source_files=self.observed._inputs if self.observed is not None else None)
                 self.script_evidence = inputs['scripts'] = state.legacy().evidence(self.scripts, home, ignore_pending)
             if self.observed is not None:
                 if self.environment:
@@ -312,6 +331,7 @@ class Plan:
             # Compare both positions. A displaced declaration can establish a
             # byte match, but cannot act as an exact-site anchor across opaque code.
             details = dict(row['details'])
+            details.pop('placement', None)  # Omitted declarations have no archived Settings placement.
             delta = receipt['offset'] - details['span'][0]
             for field in ('span', 'body', 'name'):
                 if field in details:
@@ -410,6 +430,7 @@ class Plan:
                 self.observable_absences.add(key)
             groups.setdefault(path, []).append(row)
 
+        saved_sources = {s['id']: s for s in value._value['sources']}
         for path, items in groups.items():
             missing = [r for r in items if states[r['id']][0] == 'missing']
             if not missing:
@@ -433,8 +454,18 @@ class Plan:
             try:
                 if [target for _, target in anchors] != sorted(target for _, target in anchors):
                     raise base.Invalid('source_prerequisite')
+                exact = saved_setting_offsets(original, missing, payloads, saved_sources[missing[0]['source']])
                 for row in sorted(missing, key=lambda r: r['details']['span']):
+                    if exact:
+                        additions.setdefault(exact[row['id']], []).append(payloads[row['id']])
+                        continue
                     offset = next((target for source, target in anchors if source > row['details']['span'][0]), len(original))
+                    placement = row['details'].get('placement')
+                    file = observed._files[path]
+                    if placement and placement['graph'] == file.get('setting_runtime_graph'):
+                        positions = file['setting_operations']
+                        if placement['slot'] < len(positions):
+                            offset = min(offset, positions[placement['slot']])
                     if offset < len(original):
                         start = original.rfind(b'\n', 0, offset) + 1
                         if original[start:offset].strip(b' \t'):
@@ -474,7 +505,7 @@ class Plan:
                     states[row['id']] = ('unverified', reason)
 
         projected = observe.project_appends(self._home, self.helper, observed, self.writes, self._check,
-                                            (MANAGED_PATH,), environment=True) if self.writes else observed
+                                            (MANAGED_PATH,), environment=True, settings=self.settings) if self.writes else observed
         ambiguous = self._align_occurrences(projected) if self.writes else self._ambiguous
         projected_definitions = self._existing_definitions(projected) if self.writes else existing
         target_rows = {r['id']: r for r in projected.snapshot._value['items']}
@@ -484,8 +515,12 @@ class Plan:
         # Replanning without blocked writes retains the user's original
         # comparison scope. A skipped later declaration is still selected.
         comparison_ids = {r['id'] for r in value._value['items']}
-        expected_order = environment_order(value, selected_ids)
-        actual_order = environment_order(projected.snapshot, selected_ids)
+        # Opposite settings are preserved in place. Their relative position cannot
+        # establish order for an independent declaration that we may publish.
+        ordered_ids = selected_ids - {r['id'] for r in rows if r['kind'] == 'setting'
+                                     and states[r['id']][0] == 'differing'}
+        expected_order = environment_order(value, ordered_ids)
+        actual_order = environment_order(projected.snapshot, ordered_ids)
         unordered = set(ambiguous)
         for context, expected in expected_order.items():
             unordered.update(order_conflicts(expected, actual_order.get(context, [])))
@@ -503,7 +538,6 @@ class Plan:
                 anchors_by_source.setdefault(row['source'], []).append(row['details']['span'][0])
         # An older narrow archive may still prove the entire original file.
         # Only declarations independently present before projection can anchor it.
-        saved_sources = {s['id']: s for s in value._value['sources']}
         projected_loads = {visit['id']: visit for visit in projected._loads}
         for key, before in actual.items():
             if key in comparison_ids or key in unsafe_bindings or before != target_rows.get(key):
@@ -523,13 +557,52 @@ class Plan:
             if observe._equivalence_context(projected._files, visits, projected._issues, self._check) is None:
                 anchors_by_source = None
 
+        # Compare the reparsed publication candidate with the captured source and every
+        # saved visit. A retained declaration at the same offset cannot attest opaque bytes.
+        exact_setting_sources = set()
+        configured_contexts = set()
+        if self.settings and any(row['kind'] == 'setting' and states[row['id']][0] == 'missing' for row in rows):
+            # Keep clean-target reconstruction. A retained executable predecessor
+            # replaced by an ordinary command still needs the archived placement.
+            configured_sources = {f['source']['id'] for f in observed._files.values()
+                                  if f['source'] and f.get('setting_context_code', True)}
+            configured_contexts = {v['context'] for v in observed._loads if v['source'] in configured_sources}
+            for path, file in projected._files.items():
+                source = file['source']
+                if (source and source == saved_sources.get(source['id'])
+                        and self._unchanged_environment_visits(source, projected_loads)):
+                    before = observed._files[path]
+                    retained = {site for site, _, effect, _ in before.get('setting_sites', ()) if effect == 'runtime'}
+                    if all(site in retained and before['raw'][slice(*site)] == file['raw'][slice(*site)]
+                           for site, _, effect, _ in file.get('setting_sites', ()) if effect == 'runtime'):
+                        exact_setting_sources.add(source['id'])
         for row in rows:
             self._check()
             key = row['id']
             if states[key][0] not in ('matching', 'missing'):
                 continue
             found = target_rows.get(key)
-            if key in existing:
+            if row['kind'] == 'setting' and found:
+                same_site = row['details']['span'] == found['details']['span'] and row['loads'] == found['loads']
+                placement = row['details'].get('placement')
+                proof = exact_setting_sources if same_site and not placement else ()
+                original = observed._files[source_paths[row['source']]]
+                adding = states[key][0] == 'missing'
+                placement_matches = bool(placement and placement['graph'] == original.get('setting_runtime_graph')
+                                         and placement == found['details'].get('placement'))
+                reason = observe.setting_issue(found, projected, adding=adding, exact_sources=proof,
+                                               placement_matches=placement_matches)
+                if (not reason and placement and not placement_matches
+                        and (placement.get('source_required') or
+                             adding and any(saved_loads[k]['context'] in configured_contexts for k in row['loads']))):
+                    reason = 'source_prerequisite'
+                if reason == 'target_conflict':
+                    states[key] = ('differing', reason)
+                    continue
+                if not reason:
+                    reason = self._environment_context(row, projected, found, selected_ids, unsafe_bindings,
+                                                       anchors_by_source, adding=states[key][0] == 'missing')
+            elif key in existing:
                 reason = None if projected_definitions.get(key) == existing[key] else 'source_prerequisite'
             elif row['kind'] in ('alias', 'function') and projected.codes:
                 # B4 independently qualifies the original interactive route,
@@ -656,7 +729,7 @@ class Plan:
             return False
         if row['kind'] not in state.environment.KINDS:
             return content(observed.snapshot, found) == payload
-        expected = state.environment.classify(state.utf8(payload))[2]
+        expected = state.environment.classify(state.utf8(payload), settings=row['kind'] == 'setting')[2]
         actual = found['details']['intent']
         if expected == actual:
             return True
@@ -695,6 +768,14 @@ class Plan:
 
     def _environment_payload(self, row, raw):
         intent = row['details']['intent']
+        if row['kind'] == 'setting':
+            if row['key'] == 'HISTFILE':
+                name = intent['value']
+                try:
+                    self.provider_evidence[name] = sources.history_destination(self._home, name)
+                except (ValueError, OSError):
+                    return 'unsafe_destination', raw
+            return None, raw
         if row['kind'] == 'initializer':
             try:
                 if row['key'] in ('nvm', 'Cargo', 'asdf'):
@@ -943,7 +1024,9 @@ class Plan:
                 return 'source_prerequisite'
             if not file.get('all_outer_bounded'):
                 return 'source_prerequisite'
-            opaque = self._opaque_statements(file)
+            # Settings already qualified every active span and projected insertion
+            # through setting_issue. Keep shared dependency and binding checks below.
+            opaque = set() if row['kind'] == 'setting' else self._opaque_statements(file)
             if opaque:
                 unchanged = not adding and self._unchanged_environment_placement(row, found, file, opaque, loads, original)
                 if not unchanged and not (anchored_route and self._anchored_environment_placement(
@@ -1514,16 +1597,16 @@ def publish(value, home, *, expected=None, helper=None, cancelled=lambda: False,
             def validate_sources(ignore_pending=()):
                 fresh_sources = observe.observe(home, current.helper, cancelled=cancelled,
                     _ignore_pending=ignore_pending, aliases=True, independent=True, _additional_sources=(MANAGED_PATH,),
-                    environment=current.environment)
-                if fresh_sources._files != current.observed._files:
+                    environment=current.environment, settings=current.settings)
+                if fresh_sources._inputs != current.observed._inputs:
                     raise base.Invalid('target_changed')
             changed = state.legacy().publish(current.scripts, home,
                 expected=current.script_evidence, approvals=approvals,
-                source_files=current.observed._files if current.observed is not None else None,
+                source_files=current.observed._inputs if current.observed is not None else None,
                 validate_sources=validate_sources if current.observed is not None else None)
             fresh = plan(value, home, helper=current.helper, cancelled=cancelled)
             if fresh.provider_evidence != current.provider_evidence or (
-                    current.observed is not None and fresh.observed._files != current.observed._files):
+                    current.observed is not None and fresh.observed._inputs != current.observed._inputs):
                 raise base.PublicationUncertain('source_changed')
             current = fresh
             if current.skipped != skipped or any(s not in ('matching', 'missing') and r['id'] not in skipped for r, s, _ in current.rows):
@@ -1543,8 +1626,8 @@ def publish(value, home, *, expected=None, helper=None, cancelled=lambda: False,
             # Other observed sources and their metadata must remain identical.
             if (fresh.skipped != skipped or current.provider_evidence != fresh.provider_evidence or
                     fresh.observed._files.get(path, {}).get('raw') != candidate or
-                    {p: f for p, f in fresh.observed._files.items() if p != path} !=
-                    {p: f for p, f in current.observed._files.items() if p != path}):
+                    {p: f for p, f in fresh.observed._inputs.items() if p != path} !=
+                    {p: f for p, f in current.observed._inputs.items() if p != path}):
                 raise base.PublicationUncertain('source_changed')
             current = fresh
         if current.skipped != skipped or any(s != 'matching' and r['id'] not in skipped for r, s, _ in current.rows):

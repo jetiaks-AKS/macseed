@@ -188,11 +188,14 @@ def typed_shell(files):
 
 
 def shell_functional_counts(typed):
-    """Project validated typed items into the three Capture selection groups."""
+    """Project validated typed items into the populated Capture selection groups."""
     kinds = [item['kind'] for item in typed._value['items']]
-    return dict(aliases_functions=kinds.count('alias') + kinds.count('function'),
-                scripts=kinds.count('script'),
-                variables_path=sum(kind in shell_state_contract().environment.KINDS for kind in kinds))
+    counts = dict(aliases_functions=kinds.count('alias') + kinds.count('function'),
+                  scripts=kinds.count('script'),
+                  variables_path=sum(kind in shell_state_contract().environment.VARIABLE_KINDS for kind in kinds))
+    if 'setting' in kinds:
+        counts['settings'] = kinds.count('setting')
+    return counts
 
 
 def shell_functions_contract():
@@ -832,14 +835,14 @@ def validate_archive(path, with_provenance=False):
         expected.add('generated/workspace/topology.json')
     required_features = manifest.get('required_features', {})
     supported_versions = {key: (1,) for key in WORKSPACE_EXTENSIONS.values()}
-    supported_versions.update({'ssh-configuration': (2,), 'shell-aliases': (1, 2, 3, 4, 5), 'shell-state': (1, 2)})
+    supported_versions.update({'ssh-configuration': (2,), 'shell-aliases': (1, 2, 3, 4, 5), 'shell-state': (1, 2, 3)})
     if (not isinstance(required_features, dict) or
             any(type(value) is not int or value not in supported_versions.get(key, ())
                 for key, value in required_features.items())):
         raise Unsupported('unsupported Bundle capabilities')
     if required_features.get('shell-aliases') == 5:
         expected.update(name for name in files if script_member(name))
-    if required_features.get('shell-state') in (1, 2):
+    if required_features.get('shell-state') in (1, 2, 3):
         typed = typed_shell(files)
         if typed is None:
             raise Invalid('missing typed Shell snapshot')
@@ -924,7 +927,7 @@ def inspect_bundle(bundle, home):
         result['shell_script_candidates'] = shell_candidates
     if typed is not None:
         result.update(required_features=validate_workspace(files, exact=True) | validate_ssh(files) | validate_shell(files), restore_supported=True)
-        if typed._value['schema'] == 2:
+        if typed._value['schema'] >= 2:
             result['shell_functional_counts'] = shell_functional_counts(typed)
     return result
 

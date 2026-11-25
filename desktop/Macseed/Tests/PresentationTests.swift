@@ -2946,7 +2946,7 @@ private struct CaptureRefinementHost: View {
         precondition(countPill.contains("Text(String(count))") && !countPill.contains("Text(label"))
         precondition(countPill.contains(".accessibilityLabel(label)") && countPill.contains(".accessibilityValue(String(count))"))
         precondition(!source.contains("No item-level completion or Verification was reported.") && !source.contains("Finishing Current Installation"))
-        precondition(source.contains("let children = childrenByID[domain.id] ?? domain.resultChildren")
+        precondition(source.contains("childrenByID[domain.id] ?? (rebuildResult ? domain.rebuildResultChildren : domain.resultChildren)")
             && source.contains("ForEach(children)") && source.contains("Stopping Rebuild…"))
         print("PASS: shared plan-row summary, disjoint breakdowns, unknown scope, Apply without Verification and operation-bound Stop notices")
     }
@@ -3264,7 +3264,7 @@ private struct CaptureRefinementHost: View {
         let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
         let final = source.components(separatedBy: "struct RestoreFinalDomain: View {")[1].components(separatedBy: "struct RestoreResultStatusLabel:")[0]
         precondition(final.components(separatedBy: "RestoreResultColumns {").count == 2)
-        precondition(final.contains("RestoreResultCategoryHeader(id: domain.id"))
+        precondition(final.contains("RestoreResultCategoryHeader(id: shellRoot?.id ?? domain.id"))
         let header = source.components(separatedBy: "struct RestoreResultCategoryHeader:")[1].components(separatedBy: "struct RestoreFinalDomain:")[0]
         precondition(header.contains("RestoreResultColumns {"))
         precondition(header.contains("RestoreTrailingControls(status:") && !header.contains("Spacer("))
@@ -5070,8 +5070,8 @@ private struct CaptureRefinementHost: View {
             return TaskItemPresentation(id: item.id, item: item, state: .matching, sourceDomain: "shell-zsh", sourceItemID: id)
         }
         let shell = TaskDomainPresentation(id: "shell-zsh", title: "Shell", symbol: "terminal", items: shellItems)
-        let resultGroups = RestoreExecutionCategories.resultDomains([shell])
-        precondition(resultGroups.map(\.items.count) == [1, 1, 1] && resultGroups.last?.id == DeveloperSelectionGroup.environmentID)
+        let resultGroups = shell.rebuildResultChildren
+        precondition(resultGroups.map(\.items.count) == [2, 1] && resultGroups.first?.rebuildResultChildren.map(\.items.count) == [1, 1] && resultGroups.last?.id == DeveloperSelectionGroup.environmentID)
         precondition(RestorePreviewHierarchy.disclosureIDs([shell], settings: []).contains(DeveloperSelectionGroup.environmentID))
         let checkGroups = EnvironmentComparisonDomain.shellChildren(.init(id: shell.id, title: shell.title, symbol: shell.symbol, items: shellItems.map(\.item)))
         precondition(checkGroups.map(\.items.count) == [1, 1, 1] && checkGroups.last?.items.first?.id == shellItems.last?.id)
@@ -6086,11 +6086,12 @@ private struct CaptureRefinementHost: View {
         let digest = String(repeating: "a", count: 64)
         let definitions = ["shell-alias:", "shell-function:"].map { $0 + digest }
         let scripts = ["shell-script:" + digest]
+        let settings = ["shell-setting:" + digest]
         let environment = ["shell-variable:", "shell-path-operation:", "shell-initializer:"].map { $0 + digest }
         let domain = "shell-zsh"
         let catalog = CoreRestoreInspection.Inventory(groups: [.init(id: "Shell", domains: [domain])],
             inventory: [.init(domain: domain, label: "Aliases & Functions", selectionMode: "items", availability: "available",
-                reason: nil, items: (definitions + scripts + environment).map { .init(itemID: $0, label: "Fixture") })])
+                reason: nil, items: (definitions + scripts + environment + settings).map { .init(itemID: $0, label: "Fixture") })])
         func event(_ type: String, _ sequence: Int, _ data: [String: String]) throws -> CoreEvent {
             try CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1,
                 "operation_id": "fixture", "sequence": sequence, "type": type, "data": data]))
@@ -6114,7 +6115,8 @@ private struct CaptureRefinementHost: View {
             return [node] + (node.accessibilityChildren?() ?? []).flatMap { elements($0 as AnyObject, depth: depth + 1) }
         }
         for (ids, title) in [(definitions, "Aliases & Functions"), (scripts, "Scripts"), (definitions + scripts, "Shell"),
-                             (environment, "Variables & PATH"), (definitions + scripts + environment, "Shell")] {
+                             (environment, "Variables & PATH"), (settings, "Shell Settings"),
+                             (definitions + scripts + environment + settings, "Shell")] {
             let rows = ids.map { ["domain": domain, "item_id": $0, "action": "set_setting", "disposition": "planned"] }
             let scope = ["domain": domain, "item_id": "scope", "action": "none", "disposition": "information",
                          "reason": "shell_activation_unknown"]
@@ -6159,7 +6161,7 @@ private struct CaptureRefinementHost: View {
                 let value = object?.responds(to: selector) == true ? object?.perform(selector)?.takeUnretainedValue() as? String : nil
                 return [node.accessibilityLabel?(), value].compactMap { $0 }
             })
-            precondition(labels.intersection(["Shell", "Scripts", "Aliases & Functions", "Variables & PATH"]) == [title],
+            precondition(labels.intersection(["Shell", "Scripts", "Aliases & Functions", "Variables & PATH", "Shell Settings"]) == [title],
                 "Expected only the selected Shell progress title \(title), got \(labels)")
             precondition(!nodes.contains { [.button, .disclosureTriangle].contains($0.accessibilityRole?()) })
             print("PASS: flat shell-zsh Progress, \(ids.count) selected items, \(title)")
@@ -6180,8 +6182,8 @@ private struct CaptureRefinementHost: View {
         precondition(captured.title == "Aliases & Functions")
         let legacy = CaptureCategory(row: try JSONDecoder().decode(CoreCaptureInventoryRow.self, from: data([
             "domain": "shell-zsh", "status": "present", "selection_mode": "category", "items": []])))
-        precondition(legacy.title == "Settings" && legacy.display.items[0].title == "Saved Zsh file")
-        precondition(DeveloperSelectionGroup.title("shell-zsh", fallback: legacy.title) == "Settings")
+        precondition(legacy.title == "Shell Settings" && legacy.display.items[0].title == "Saved Zsh file")
+        precondition(DeveloperSelectionGroup.title("shell-zsh", fallback: legacy.title) == "Shell Settings")
         precondition(captured.notices.contains { $0.requiresAttention })
         let counts = ["matching": 1, "missing": 1, "differing": 0, "unverified": 0, "unsupported": 0, "unresolved": 1, "extra": 0, "unknown_difference": 0]
         var check: Object = ["read_only": true, "publication_occurred": false, "target_mutation_may_have_started": false,
@@ -6755,7 +6757,7 @@ private struct CaptureRefinementHost: View {
         var legacyPlan = plan
         legacyPlan["plan"] = [["domain": "shell-zsh", "item_id": "opaque:legacy", "action": "none", "disposition": "warning", "reason": "source_excluded"]]
         let legacyPreview = RestorePreviewPresentation(try JSONDecoder().decode(CoreRestorePreparation.self, from: data(legacyPlan)), catalog: legacyCatalog)
-        precondition(legacyPreview.categories[0].title == "Settings")
+        precondition(legacyPreview.categories[0].title == "Shell Settings")
         precondition(legacyPreview.categories[0].items[0].title == "Saved Zsh file")
         precondition(legacyPreview.categories[0].items[0].action.contains("saved Shell file"))
         let event = try CoreEvent(line: data(["protocol_version": 1, "operation_id": "shell-alias-fixture", "sequence": 2,
@@ -8004,7 +8006,7 @@ private struct CaptureRefinementHost: View {
                 RestoreExecutionCategories(domains: resultRows, resultStatuses: true)
                 RestoreResultActions(result: result, refresh: {}, done: {}, logRuntime: runtime)
             }.environment(\.openOperationLog, { openedLog = $0 }))
-            ordered(["Standard Setup", "Homebrew Applications", "macOS Settings", "VS Code Extensions", "For Experienced Users", "Git Repositories / Worktrees", "Workspace Folders", "Aliases & Functions"])
+            ordered(["Standard Setup", "Homebrew Applications", "macOS Settings", "VS Code Extensions", "For Experienced Users", "Git Repositories / Worktrees", "Workspace Folders", "Shell"])
             let renderedSummary = try visibleText()
             precondition(renderedSummary.contains("8 Verified") && renderedSummary.contains("1 Unresolved") && text(host).contains("Rebuild Completed with Issues"), "Visible Result summary: " + renderedSummary)
             for expanded in [false, true, false] {
@@ -8012,9 +8014,9 @@ private struct CaptureRefinementHost: View {
                 else if value(header("macOS Settings")) == "Expanded" { try await press("Collapse All") }
                 let mac = header("macOS Settings").accessibilityLabel?() ?? ""
                 precondition(mac.contains("Complete") == !expanded && mac.contains("Success"), "macOS status moves; count remains: " + mac)
-                for title in ["Git Repositories / Worktrees", "Aliases & Functions"] {
+                for title in ["Git Repositories / Worktrees", "Shell"] {
                     let label = header(title).accessibilityLabel?() ?? ""
-                    if title == "Aliases & Functions" {
+                    if title == "Shell" {
                         precondition(label.components(separatedBy: "Needs Attention").count - 1 == 2, "Functional warning status and badge both remain: " + label)
                     } else { precondition(label.contains("Complete") && label.contains("Success")) }
                 }

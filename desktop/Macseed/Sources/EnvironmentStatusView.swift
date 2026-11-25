@@ -274,7 +274,16 @@ struct EnvironmentComparisonDomain: View {
     var depth = 0
     var secureActions: AnyView? = nil
     @ReferenceViewState<Bool> private var expanded = false
+    private static func isSettings(_ category: DisplayCategory) -> Bool {
+        category.id == DeveloperSelectionGroup.settingsID || (category.id == "shell-zsh" && category.title == DeveloperSelectionGroup.settingsTitle)
+    }
     static func shellChildren(_ category: DisplayCategory) -> [DisplayCategory] {
+        if isSettings(category) {
+            return ShellSettingGroup.sections(category.items, by: \.shellSettingGroup).map { group, items in
+                DisplayCategory(id: group.disclosureID, title: group.title, symbol: "list.bullet",
+                    items: items.sorted { $0.title < $1.title })
+            }
+        }
         guard ["shell-zsh", ShellCommandPresentation.commandsID].contains(category.id), category.items.contains(where: {
             $0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-function:") || $0.id.hasPrefix("shell-zsh:shell-script:")
         }) else { return [] }
@@ -284,7 +293,8 @@ struct EnvironmentComparisonDomain: View {
         let aliases = category.items.filter { !$0.id.hasPrefix("shell-zsh:shell-script:") && !environmentIDs.contains($0.id) }
         return [(ShellCommandPresentation.aliasesID, "Aliases & Functions", "terminal", aliases),
                 (ShellCommandPresentation.scriptsID, "Scripts", "applescript", scripts),
-                (DeveloperSelectionGroup.environmentID, "Variables & PATH", "list.bullet.rectangle", environment)].compactMap { id, title, symbol, items in
+                (DeveloperSelectionGroup.environmentID, "Variables & PATH", "list.bullet.rectangle", environment.filter { !$0.id.hasPrefix("shell-zsh:shell-setting:") }),
+                (DeveloperSelectionGroup.settingsID, DeveloperSelectionGroup.settingsTitle, "slider.horizontal.3", environment.filter { $0.id.hasPrefix("shell-zsh:shell-setting:") })].compactMap { id, title, symbol, items in
             items.isEmpty ? nil : DisplayCategory(id: id, title: title, symbol: symbol, items: items)
         }
     }
@@ -340,7 +350,8 @@ struct EnvironmentComparisonDomain: View {
                         treeExpansion: treeExpansion, categoryCounts: categoryCounts,
                         technicalExpansion: technicalExpansion, depth: depth + 1, secureActions: secureActions)
                 }
-            } else {
+            }
+            if childCategories.isEmpty || Self.isSettings(category) {
                 if category.id == "secure-ssh-identities", let secureActions {
                     secureActions.padding(.leading, CGFloat(depth + 1) * 24 + 34).padding(.vertical, 8)
                 }
@@ -348,7 +359,9 @@ struct EnvironmentComparisonDomain: View {
                     Text(category.id.hasPrefix("homebrew-") ? "Couldn’t read Homebrew state." : "Couldn’t read the current state of this category.")
                         .font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
                 }
-                ForEach(EnvironmentComparisonView.visibleCategory(category).items) { item in
+                let items = EnvironmentComparisonView.visibleCategory(category).items
+                // Keep rows without optional Check metadata visible directly under Settings.
+                ForEach(childCategories.isEmpty ? items : items.filter { $0.shellSettingGroup == nil }) { item in
                     EnvironmentComparisonItem(item: item, facts: technicalFacts[item.id] ?? [],
                         depth: depth + 1, technicalExpansion: technicalExpansion, suppressExplanation: sharedIDs.contains(item.id),
                         coverageHelp: coverageHelp[item.id])

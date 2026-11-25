@@ -198,6 +198,15 @@ validated v2 inputs on capable Core. Older capture-only capability responses rem
 readable. The flag describes protocol support. Preview qualifies each selected
 target operation. Verify and Comparison identify `variable_declaration`,
 `path_operation` and `initializer_declaration` by the saved opaque item ID.
+Core also advertises `shell_settings` version 1 with `required_feature: {"shell-state": 3}`
+and `restore_supported: true`. Clients opt into Settings with `shell_settings: true`
+alongside `shell_environment: true` in Capture Prepare and Execute. Each selected
+`shell-setting:<digest>` requires the same explicit plaintext consent. A selection
+containing Settings emits v3. Other selections retain their compatible format.
+Settings inventory adds `environment.setting_group` (`options`, `history` or `keymaps`).
+Verify and Check use `setting_declaration`. The v2 item-local skip contract also
+applies to v3 setting IDs.
+
 For Variables & PATH, the Restore selection inventory also carries the saved
 declaration's sanitized `environment` detail (explanation, startup context and
 origin), using the same projection as Capture. This detail never authorizes a
@@ -648,7 +657,9 @@ The manifest cannot expand unrelated parameters or transport file content. Nativ
 cleans it with the existing operation directory on completion/cancellation.
 
 Core's Capture summary counts Aliases & Functions, Scripts and Variables & PATH
-once each when selected. All three use the physical `shell-zsh` domain.
+once each when selected. V3 also counts Shell Settings once and adds the saved setting count
+to `shell_functional_counts.settings`. Presentation subgroups contribute zero domains and items.
+These categories use the physical `shell-zsh` domain.
 Native applies that contract in live Selection and validates Core preparation for
 Confirmation. Result projects functional counts from
 validated Bundle inspection. For `shell-state:2`, inspection returns
@@ -656,8 +667,8 @@ validated Bundle inspection. For `shell-state:2`, inspection returns
 and `variables_path`. Native checks all three against prepared item IDs and file consent.
 Earlier formats retain the existing `shell_script_candidates` and `selected_item_counts` projection.
 Each selected declaration and each unique selected script file contributes one item,
-including files referenced by aliases. With 11 other selected domains, selecting
-all three Shell groups gives 14 domains. Clearing any one group gives 13.
+including files referenced by aliases. With 11 other selected domains, the three
+v2 Shell groups give 14 domains. Selecting Shell Settings as well gives 15 in v3.
 
 Optional `shell_script_selection` is a unique list of at most 128 valid script IDs
 (legacy Capture policies retain 16),

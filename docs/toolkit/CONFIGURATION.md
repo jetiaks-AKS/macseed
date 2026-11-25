@@ -141,7 +141,83 @@ Startup files, ZDOTDIR, source paths and dependencies are provenance, not additi
 categories. Legacy whole-file requirements appear as **Settings → Saved Zsh file**
 with their existing Core identity and restoration policy. Aliases, Functions and
 qualified Variables & PATH requirements support Capture, Restore, Verify and Check
-with Native selection. Shell Settings and qualified Plugins & Themes remain planned.
+with Native selection. [Shell Settings](#shell-settings-b6a) shares those workflows.
+Plugins & Themes remains deferred.
+
+### Shell Settings (B6A)
+
+Capture admits the following standalone, parser-bounded declarations in a qualified
+user startup file or literal source. Each selected declaration retains its exact bytes.
+
+| Group | Qualified forms |
+|---|---|
+| Shell Options | `setopt NAME` and `unsetopt NAME`, one uppercase name from `AUTO_CD`, `BEEP`, `HIST_IGNORE_DUPS`, `HIST_IGNORE_SPACE`, `HIST_REDUCE_BLANKS` |
+| History | `HISTSIZE=N` and `SAVEHIST=N`, decimal 1 through 1,000,000 without leading zeros. `HISTFILE="$HOME/.zsh_history"` also accepts `${HOME}` and the basename `.zhistory`. |
+| Key Bindings | `bindkey -e` (Emacs) or `bindkey -v` (Vi) on an interactive startup route |
+
+The setting identity binds its source, key and occurrence. The Bundle records the
+enabled state, number, portable filename or keymap, with source spans and load order.
+Core qualifies each setting on its observed startup routes. A literal option operation,
+history reference or key binding can exclude the affected item while leaving independent
+settings selectable. Repeated declarations, shadowed commands, uncertain source edges
+and unbounded statements still restrict qualification. Unsupported history declarations
+remain excluded from ordinary variables. Historical v2 Bundles retain their variable
+identities and comparison predicates. Across formats the source reader rejects
+`.zsh_history` and `.zhistory` as configuration sources.
+
+The [controlled B6A acceptance](../qualification/SHELL-SETTINGS-B6A-2026-11-25.md) covers five
+requirements restored at their original qualified startup location.
+
+An explicit option, numeric history assignment or standard keymap can follow a
+parser-bounded external initialization on every applicable route. Core records the
+declaration at that position. It neither runs the initializer nor infers the shell
+state its output would create. A later initializer could override the declaration.
+An earlier initializer before a required source edge could redirect it. Either
+uncertainty blocks the item. The HOME-relative history filename also requires
+qualified HOME resolution. An unresolved startup root or computed command can
+leave the whole affected route unqualified.
+
+Rebuild compares each setting at its qualified source. Matching declarations are preserved.
+An opposing declaration stays in place and Preview identifies the conflict. A qualified
+missing declaration can be inserted alongside an independent conflict. Verify and Check
+compare saved startup configuration. Runtime key events and future session behavior are
+outside that evidence. The history file supplies only destination metadata. Its contents
+are excluded from migration. Per-key widgets, custom keymaps, option aliases and dynamic
+configuration remain outside this contract.
+
+For settings on routes with bounded external initialization, Capture can retain a private
+placement record in the selected v3 item. It contains one SHA-256 digest of the ordered
+executable operations and applicable source visits, plus the number of non-setting
+operations preceding the declaration in its file. Literal load edges are bound to their
+parent operation. Blank lines, outer comments and independently selectable settings do
+not contribute to the operation digest. Omitted source text is never stored in the record.
+
+Preview compares that evidence with the observed target and the reparsed insertion. The
+setting must occupy its saved operation boundary on every applicable route. Changed
+executable context, unresolved boundaries, command shadowing and conflicting declarations
+retain their existing safety checks. Exact bytes and filesystem metadata still bind
+Prepare to publication, including changes to comments after Preview. Ordinary clean-target
+reconstruction remains available. Older v3 items without a placement record retain the
+exact-source proof for crossing initialization. V1 and v2 contain no Settings evidence.
+
+A symbolic source such as `source "$CONFIG_ROOT/interactive.zsh"` or its `.`
+equivalent can also qualify. The startup root must begin with an unconditional
+scalar assignment of a portable directory under `"$HOME"`. Ordinary literal
+configuration assignments may occur before its use. Earlier roots on the same
+route may contain comments, blank lines and ordinary aliases with qualified
+command resolution. Core reads the named, user-owned `.sh` or `.zsh` file with
+the existing protected source reader. Every executable statement in that file
+must be a parser-bounded literal option operation with known effects. An
+operation affecting a selected option prevents qualification of that option.
+
+For this case the placement digest also binds the portable file identity and
+its exact contents. The optional v3 placement flag `source_required` requires
+this evidence even on an empty target. The dependency supplies no Bundle payload
+or Restore destination. Freshness checks cover its filesystem identity through
+publication. A missing or linked file, unresolved binding, shadowed command,
+nested load or opaque library body prevents selection on the affected route.
+Earlier Bundles remain readable. A missing setting can cross a symbolic source
+only with the dependency evidence from a fresh Capture.
 
 ### Structural parser foundation
 
@@ -295,7 +371,7 @@ A match establishes saved structure, placement and required inspected prerequisi
 Future process state, project trust, version-manager downloads and third-party
 behavior remain outside this evidence. Virtual environments need independent
 recreation. Framework plugin arrays, themes, prompts and completion require the
-subsequent Shell Settings and Plugins & Themes contracts.
+separate integration contracts.
 
 The release boundaries above come from the provider-owned implementations and
 artifacts. [Homebrew shellenv](https://github.com/Homebrew/brew/blob/7.0.15/Library/Homebrew/cmd/shellenv.sh),
@@ -343,7 +419,7 @@ The magic is followed by one strict UTF-8 JSON object. Its exact fields are:
 No optional extension bags, saved `qualified`/`eligible` flags or target write
 permissions exist. Unknown fields, kinds, versions/profiles, duplicate JSON keys,
 non-integer numbers and malformed required contracts fail closed. Variables & PATH
-uses the [v2 contracts](#variables--path-capture-b5b). Settings remains planned. Changes to shared
+uses the [v2 contracts](#variables--path-capture-b5b). Settings uses the [v3 contract](#shell-settings-b6a). Changes to shared
 semantics or limits require an explicitly supported profile version.
 Kind contract `script: 1` versions the new descriptor, not the legacy transfer
 policy: its payload validation still uses Scripts v5.
@@ -1346,7 +1422,7 @@ These broader dependencies do not reopen the accepted four-object checkpoint.
 Bounded [Functions Restore/Check](#functions-restore-verify--check-b3) follows B2B Capture;
 the later Stage 3C order remains unchanged.
 
-Broader Functions prerequisites, additional provider profiles, Shell Settings, broader alias forms, metadata-safe updates
+Broader Functions prerequisites, additional provider profiles, broader alias forms, metadata-safe updates
 and framework/plugin prerequisites remain the
 [next bounded slices](../../TODO.md#shell--zsh-functional-completion--current).
 Oh My Zsh and plugin-manager configuration is distinct from installed frameworks;

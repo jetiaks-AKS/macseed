@@ -22,7 +22,7 @@ class InvalidSelection(Exception):
 
 def identity(domain, source):
     if domain == 'shell-zsh':
-        return source if re.fullmatch(r'shell-(?:alias|script|function|variable|path-operation|initializer):[0-9a-f]{64}', source) else bundle.shell_contract().identity(source)
+        return source if re.fullmatch(r'shell-(?:alias|script|function|variable|path-operation|initializer|setting):[0-9a-f]{64}', source) else bundle.shell_contract().identity(source)
     if domain == 'vscode-workspaces':
         return source
     return 'restore:' + hashlib.sha256((domain + '\0' + source).encode()).hexdigest()

@@ -7,61 +7,28 @@ Close future gates with the evidence location, revision, host/runtime, selected 
 and result. Preserve accepted evidence and obtain only missing evidence under the
 authorized gate; an interrupted run is not a full PASS and does not justify broad reruns.
 
-## Shell / Zsh functional completion — current
+<a id="shell--zsh-functional-completion--current"></a>
 
-Follow the approved order: **Shell → Stage 3C → remaining Stage 16 functionality →
-Stage 17 distribution → final comprehensive qualification → Alpha → 1.0**.
-The [Shell contract](docs/toolkit/CONFIGURATION.md#shell--zsh-configuration) owns the
-source and definition contracts, including legacy whole-file behavior.
+## Shell qualification
 
-The [B4 real-Mac GUI acceptance](docs/qualification/SHELL-UNIFIED-B4-2026-11-17.md#real-mac-gui-acceptance-2026-11-18)
-closed the mixed Custom Commands workflow. The
-[B5 real-Mac acceptance](docs/qualification/SHELL-VARIABLES-PATH-2026-11-20.md#controlled-real-mac-acceptance)
-closed the qualified Variables & PATH functional lifecycle. The
-[final focused checks](docs/qualification/SHELL-VARIABLES-PATH-2026-11-20.md#final-protocol-v1-and-check-presentation-checks)
-cover partial Function plans and both Check expansion controls.
+The next functional checkpoint is [Stage 3C reconciliation](#cancellation-recovery-and-runtime-reliability).
+Keep the following release and compatibility checks for the accepted Shell scope.
 
-- [ ] **Variables & PATH recovery (B5C):** extend independently reviewed provider/release coverage.
-  Qualify default nvm activation with target Node/project evidence and
-  full pyenv initialization with competing shims or unqualified command paths. Extend
-  the reviewed standalone mise and Homebrew release sets, qualify a real custom
-  Homebrew prefix and establish a sustainable review and trust-update process.
-- [ ] Qualify the B5 patch in hosted CI. Packaged clean-Mac and full-product E2E
-  remain separate gates. Other deferred Check UX work remains open.
-- [ ] Qualify Function call/alias dependencies, side effects and target configurations
-  beyond exact-definition recovery.
+- [ ] Qualify the B6A patch in hosted CI, including the [symbolic source
+  regression](docs/qualification/SHELL-SETTINGS-B6A-2026-11-25.md#isolated-symbolic-source-regression).
+  Retain the accepted real-Mac result.
+- [ ] Qualify the B5 patch in hosted CI. Keep packaged clean-Mac and full-product
+  E2E as separate gates.
 - [ ] Qualify [protected Functions observation](docs/core/SHELL-PARSER.md#core-caller-b2a)
-  on physical Intel, macOS 14.4, and the 14.0–14.3 unavailable path; bind the final
+  on physical Intel, macOS 14.4 and the 14.0–14.3 unavailable path. Bind the final
   signed parser manifest anchor to authenticated Core release metadata in Stage 17.
-- [ ] Qualify additional Shell syntax and Native robustness beyond the accepted B4 cases.
-  Extend managed/redirected source and dependency support only under explicit contracts.
-- [ ] **Settings**: qualify options, history settings (not history contents), completion,
-  key bindings, Starship Zsh prompt activation, zoxide navigation hooks and compinit.
-  Bind each to qualified target executables, completion directories and startup order.
-- [ ] Extend startup/source dependencies beyond the implemented bounded static chains
-  and qualified ZDOTDIR where required by functional items. These are provenance,
-  never extra UI categories; no execution during observation or unqualified source insertion.
-- [ ] **Plugins & Themes** (conditional): separate Oh My Zsh, Homebrew and plugin-manager
-  configuration from installed prerequisites, nonportable state and external dotfile
-  ownership. Qualify framework-owned plugin lists, theme selection and activation order
-  against the selected installed dependencies. Show this category only after Core functionality and relevant items
-  exist. No silent installation, arbitrary sourcing or unmanaged overwrite.
-- [ ] Qualify each completed Shell slice with focused Core/native security,
-  compatibility, conflict, approval and repeat/no-op cases. Final full application
-  Native Desktop/packaged clean-Mac qualification remains a later distinct gate.
-- [ ] Evaluate and qualify the [remaining Core dependency integration](docs/toolkit/CONFIGURATION.md#remaining-shell-recovery-integration-planned)
-  beyond the accepted Custom Commands scope: managed-dotfile/source relationships, existing
-  SSH requirements, Git/Workspace-owned sources, VS Code CLI and unresolved script
-  dependencies. Retain the [historical gap matrix](docs/qualification/SHELL-RECOVERABILITY-2026-11-12.md),
-  reuse existing owners and preserve explicit prerequisites. Declaration recovery
-  does not prove runtime behavior or remote authentication.
+- [ ] Qualify Native behavior on supported platforms and retain selection,
+  conflict, approval and repeat/no-op coverage for B4, B5, B6A and historical Bundles.
 
-Scan Folder and Automation remain deferred in Roadmap, outside the accepted
-checkpoint.
-
-**Next functional checkpoint after Shell completion:** Stage 3C reconciliation in
-[Cancellation, recovery and runtime reliability](#cancellation-recovery-and-runtime-reliability).
-Do not begin that implementation as part of the alias slice.
+Reopen [deferred Shell capabilities](docs/PRODUCT-DIRECTION.md#shell-scope-for-10)
+only against a concrete user need. Existing references retain the
+[provider qualification limits](docs/toolkit/CONFIGURATION.md#variables--path-recovery-b5c)
+and [open dependency cases](docs/toolkit/CONFIGURATION.md#remaining-shell-recovery-integration-planned).
 
 ## Complete Workspace & Git Worktree Restoration
 
@@ -196,11 +163,11 @@ these tasks require native effects or unexercised writes, not another fixture pa
   Preserve archive/worktree state, resolve or explicitly exclude conflicts
   through supported selection, and
   check repeat/no-op convergence. This does not replace Stage 17 clean-Mac gates.
-- [ ] Qualify broader Zsh configurations beyond the accepted Aliases & Scripts v5
-  A/B/C GUI test: controlled drift → Preview → Rebuild → Verification → independent
-  check → idempotent Preview, with safe backup and explicitly agreed additional scope.
-  The accepted four-object test already proved 4 Match and zero planned changes;
-  this remaining gate must not reopen that completed acceptance.
+- [ ] Include supported Shell requirements in packaged qualification with controlled
+  drift, fresh Preview, Restore, independent Check and repeat/no-op. Reuse the
+  accepted [B4](docs/qualification/SHELL-UNIFIED-B4-2026-11-17.md),
+  [B5](docs/qualification/SHELL-VARIABLES-PATH-2026-11-20.md) and
+  [B6A](docs/qualification/SHELL-SETTINGS-B6A-2026-11-25.md) functional evidence.
 - [ ] Close the remaining supported Git/SSH configuration, VS Code and macOS
   settings qualification matrix: matching state, drift, conflicts, observation
   failure and repeat/no-op. Preserve accepted flows and record any unsupported

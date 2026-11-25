@@ -96,13 +96,17 @@ enum DeveloperSelectionGroup: String, CaseIterable, Identifiable {
         return allCases.first { $0.domains.contains(id) }
     }
     // Styling includes synthetic group headers without changing domain selection.
+    static let settingsTitle = "Shell Settings"
+    static let settingsID = "shell-settings"
     static let environmentID = "shell-environment"
     static func categoryGroup(for id: String) -> Self? {
-        if [ShellCommandPresentation.commandsID, ShellCommandPresentation.aliasesID, ShellCommandPresentation.scriptsID, environmentID].contains(id) { return .shell }
+        if [ShellCommandPresentation.commandsID, ShellCommandPresentation.aliasesID, ShellCommandPresentation.scriptsID, environmentID, settingsID].contains(id)
+            || ShellSettingGroup.allCases.contains(where: { $0.disclosureID == id }) { return .shell }
         return allCases.first { $0.id == id } ?? group(for: id)
     }
     static func label(_ id: String, fallback: String, parent: Self? = nil) -> String {
-        if id == "shell-zsh", ["Settings", "Custom Commands"].contains(fallback) { return fallback }
+        if id == settingsID || (id == "shell-zsh" && ["Settings", settingsTitle].contains(fallback)) { return settingsTitle }
+        if id == "shell-zsh", fallback == "Custom Commands" { return fallback }
         let qualified = ["git-configuration": "Git Configuration", "git-repositories": "Git Repositories / Worktrees",
             "ssh-configuration": "SSH Configuration", "workspace-folders": "Workspace Folders",
             "shell-zsh": "Aliases & Functions", "vscode-workspaces": "VS Code Workspace",
@@ -129,6 +133,7 @@ enum DeveloperSelectionGroup: String, CaseIterable, Identifiable {
         if ids.contains(ShellCommandPresentation.commandsID) { result.insert(ShellCommandPresentation.commandsID) }
         if ids.contains(ShellCommandPresentation.scriptsID) { result.insert(ShellCommandPresentation.scriptsID) }
         if ids.contains(environmentID) { result.insert(environmentID) }
+        result.formUnion(Set(ids).intersection([settingsID] + ShellSettingGroup.allCases.map(\.disclosureID)))
         return result
     }
     static func state(_ children: [SelectionState]) -> SelectionState {
@@ -155,6 +160,9 @@ enum DeveloperSelectionGroup: String, CaseIterable, Identifiable {
         let categories = developerCategories(group)
         var states = categories.map(\.customCommands).filter(\.selectable).map(selectionState)
         if group == .shell && !commandsOnly && !environmentItems.isEmpty { states.append(environmentSelectionState) }
+        if group == .shell && !commandsOnly && !settingItems.isEmpty {
+            states.append(SelectionState.summarize(selected: selectedItems["shell-zsh"] ?? [], children: settingItems.map(\.itemID)))
+        }
         if group == .shell && !parentShellScripts.isEmpty {
             states.append(SelectionState.summarize(selected: authorizedShellScripts, children: parentShellScripts.map(\.id)))
         }
@@ -579,11 +587,67 @@ struct CaptureAccordionStyle: DisclosureGroupStyle {
     }
 }
 
+@MainActor struct ShellSettingsSelection {
+    let items: [CoreCaptureInventoryRow.Item]
+    let selected: Set<String>
+    let select: (Set<String>, Bool) -> Void
+    var disclosureIDs: [String] {
+        items.isEmpty ? [] : [DeveloperSelectionGroup.settingsID] + groups.map(\.disclosureID)
+    }
+    private var groups: [ShellSettingGroup] {
+        ShellSettingGroup.allCases.filter { group in items.contains { $0.environment?.settingGroup == group } }
+    }
+    func state(for items: [CoreCaptureInventoryRow.Item]) -> SelectionState {
+        SelectionState.summarize(selected: selected, children: items.map(\.itemID))
+    }
+    func checkbox(_ items: [CoreCaptureInventoryRow.Item], title: String) -> AnyView {
+        AnyView(NativeSelectionCheckbox("", state: state(for: items), accessibilityTitle: "Select " + title) {
+            select(Set(items.map(\.itemID)), $0)
+        })
+    }
+    var parentStatus: CaptureGroupStatus {
+        CaptureGroupStatus(summary: DeveloperSelectionGroup.summary(state(for: items), available: !items.isEmpty))
+    }
+    func groupStatus(_ items: [CoreCaptureInventoryRow.Item]) -> CaptureStatusText {
+        let count = items.filter { selected.contains($0.itemID) }.count
+        return CaptureStatusText(title: CaptureStatusText.selectionCount(count, total: items.count), secondary: count == 0)
+    }
+    func row(for item: CoreCaptureInventoryRow.Item, detail: CoreCaptureInventoryRow.Item.EnvironmentDetail) -> CaptureItemSelectionRow {
+        let setting = ShellSettingPresentation(id: item.itemID, label: item.label)
+        let title = setting?.title ?? item.label
+        let information = [setting?.declaration, detail.context + " · " + detail.origin].compactMap { $0 }.joined(separator: "\n")
+        return CaptureItemSelectionRow(title: title, included: Binding(
+            get: { selected.contains(item.itemID) }, set: { select([item.itemID], $0) }),
+            helpButton: ContextualHelpButton(id: item.itemID, title: title, description: detail.explanation,
+                information: information, hint: "Show setting details", aboveFooter: true))
+    }
+    func rows(expanded: Binding<Set<String>>) -> AnyView? {
+        guard !items.isEmpty else { return nil }
+        return AnyView(VStack(alignment: .leading, spacing: 0) {
+            ForEach(groups, id: \.self) { group in
+                let members = items.filter { $0.environment?.settingGroup == group }
+                CaptureGroupHeader(title: group.title, statusContent: AnyView(groupStatus(members)), symbol: "list.bullet",
+                    iconCategoryID: group.disclosureID, nested: true, selection: checkbox(members, title: group.title),
+                    expanded: WorkflowExpansion.binding(group.disclosureID, in: expanded))
+                if expanded.wrappedValue.contains(group.disclosureID) {
+                    ForEach(members, id: \.itemID) { item in
+                        if let detail = item.environment {
+                            row(for: item, detail: detail)
+                        }
+                    }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset + 2 * CaptureReviewPresentation.hierarchyStep)
+                }
+            }
+        }.padding(.leading, CaptureReviewPresentation.hierarchyStep))
+    }
+}
+
 struct CaptureGroupHeader: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     var summary: String? = nil
     var statusContent: AnyView? = nil
     var symbol = "square.stack.3d.up"
+    var iconCategoryID: String? = nil
     var tint: Color = .blue
     var titleTint: Color = .primary
     var attention: String? = nil
@@ -594,7 +658,7 @@ struct CaptureGroupHeader: View {
     private var hasSelectionColumn: Bool { selection != nil || reservesSelectionColumn }
     private var titleLabel: some View {
         HStack(spacing: hasSelectionColumn ? 12 : 8) {
-            Image(systemName: symbol).foregroundStyle(tint)
+            Image(systemName: symbol).foregroundStyle(iconCategoryID.map { WorkspaceCategoryStyle.tint($0, scheme: colorScheme) } ?? tint)
                 .frame(width: hasSelectionColumn ? TaskRowLayout.iconWidth : 20).accessibilityHidden(true)
             Text(title).font(nested ? .body.weight(.medium) : .headline).foregroundStyle(titleTint)
         }
@@ -654,6 +718,9 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
     var environmentStatus: AnyView? = nil
     var environmentSelection: AnyView? = nil
     var environmentItems: AnyView? = nil
+    var settingsStatus: AnyView? = nil
+    var settingsSelection: AnyView? = nil
+    var settingsItems: AnyView? = nil
     var shellCommandsSelection: AnyView? = nil
     var shellScripts: AnyView? = nil
     let summary: ([Row]) -> String
@@ -758,6 +825,10 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
                 if group == .shell, let environmentItems, let environmentStatus {
                     shellCategory(id: DeveloperSelectionGroup.environmentID, title: "Variables & PATH", symbol: "list.bullet.rectangle",
                         statusContent: environmentStatus, selection: environmentSelection) { environmentItems }
+                }
+                if group == .shell, let settingsItems {
+                    shellCategory(id: DeveloperSelectionGroup.settingsID, title: DeveloperSelectionGroup.settingsTitle, symbol: "slider.horizontal.3",
+                        statusContent: settingsStatus, selection: settingsSelection) { settingsItems }
                 }
                 if group == .ssh, let secureTransferGroup {
                     if !children.isEmpty { Divider().padding(.horizontal, 16) }
@@ -900,7 +971,7 @@ struct CaptureTaskPresentation {
                             : role == .wholeCategory ? (phase == .result ? "The whole supported configuration was saved." : "The whole supported configuration will be included in this saved environment.")
                             : phase == .progress ? "Waiting for the saved environment to be created."
                             : phase == .result ? "Included in the published saved environment." : item.action,
-                        reason: nil), state: state,
+                        shellSettingGroup: phase == .confirmation ? item.shellSettingGroup : nil), state: state,
                     captureRole: role)
             }
             if category.id == "shell-zsh" {

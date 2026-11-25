@@ -34,7 +34,7 @@ struct RestoreAreaSelectionView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: RestoreRowGrid.spacing) {
                 if area.selectable {
-                    NativeSelectionCheckbox("", state: model.selectionState(area), accessibilityTitle: "Select " + area.label) {
+                    NativeSelectionCheckbox("", state: model.selectionState(area), accessibilityTitle: "Select " + (area.id == "shell-zsh" ? DeveloperSelectionGroup.title(area.id, fallback: area.label) : area.label)) {
                         if area.id == "shell-zsh" && area.selectionMode == "items" {
                             model.selectShellItems(Set(area.items.map(\.id)), included: $0)
                         } else { model.selectArea(area.id, included: $0) }
@@ -201,16 +201,20 @@ struct RestoreSelectionContent: View {
     var expandAll: Binding<Bool>? = nil
     @RestoreViewState<Set<String>> private var expanded = []
     private var areas: [CoreRestoreInspection.Area] { RestoreSelectionPresentation.ordered(model.selectionAreas) }
+    private var shellSettings: ShellSettingsSelection {
+        ShellSettingsSelection(items: model.shellSettingItems, selected: model.selectedItems["shell-zsh"] ?? [], select: model.selectShellItems)
+    }
     private var environmentIDs: Set<String> { Set(model.shellEnvironmentItems.map(\.id)) }
     private var environmentSelected: Set<String> { environmentIDs.intersection(model.selectedItems["shell-zsh"] ?? []) }
     private var commandsState: SelectionState {
-        let aliases = areas.first { $0.id == "shell-zsh" }?.items.filter { !environmentIDs.contains($0.id) } ?? []
+        let aliases = areas.first { $0.id == "shell-zsh" }?.items.filter { !CoreCaptureInventoryRow.Item.isEnvironmentID($0.id) } ?? []
         let children = aliases.map(\.id) + model.parentShellScripts.map(\.id)
         return SelectionState.summarize(selected: (model.selectedItems["shell-zsh"] ?? []).union(model.authorizedShellScripts), children: children)
     }
     private func disclosureIDs(advanced: Bool) -> Set<String> {
         RestoreSelectionPresentation.disclosureIDs(areas, advanced: advanced, secureAvailable: model.inspection?.secureComponent == true)
             .union(advanced && !model.shellScriptCandidates.isEmpty ? [ShellCommandPresentation.scriptsID] : [])
+            .union(advanced ? shellSettings.disclosureIDs : [])
             .union(advanced && !environmentIDs.isEmpty ? [DeveloperSelectionGroup.environmentID] : [])
     }
     private var treeExpansion: Binding<Set<String>> {
@@ -238,7 +242,7 @@ struct RestoreSelectionContent: View {
                     accessibilityTitle: "Select " + group.title, mixedSelectsAll: group != .shell) { model.selectDeveloperGroup(group, included: $0) }
                     .disabled(!model.developerGroupAvailable(group) || model.state != .review || model.runtime.isActive)) },
                 developerSummary: { DeveloperSelectionGroup.summary(model.developerGroupState($0), available: model.developerGroupAvailable($0)) },
-                shellCustomCommands: !model.shellScriptCandidates.isEmpty || areas.contains { $0.id == "shell-zsh" && $0.selectionMode == "items" && $0.items.contains { !environmentIDs.contains($0.id) } },
+                shellCustomCommands: !model.shellScriptCandidates.isEmpty || areas.contains { $0.id == "shell-zsh" && $0.selectionMode == "items" && $0.items.contains { !CoreCaptureInventoryRow.Item.isEnvironmentID($0.id) } },
                 shellCommandsSummary: DeveloperSelectionGroup.summary(commandsState, available: true),
                 environmentStatus: AnyView(CaptureStatusText(title: CaptureStatusText.selectionCount(environmentSelected.count, total: environmentIDs.count), secondary: environmentSelected.isEmpty)),
                 environmentSelection: AnyView(NativeSelectionCheckbox("", state: SelectionState.summarize(selected: environmentSelected, children: Array(environmentIDs)),
@@ -253,6 +257,9 @@ struct RestoreSelectionContent: View {
                             })
                     }
                 }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset + 2 * CaptureReviewPresentation.hierarchyStep).padding(.trailing, 16)),
+                settingsStatus: AnyView(shellSettings.parentStatus),
+                settingsSelection: shellSettings.checkbox(model.shellSettingItems, title: DeveloperSelectionGroup.settingsTitle),
+                settingsItems: shellSettings.rows(expanded: treeExpansion),
                 shellCommandsSelection: AnyView(NativeSelectionCheckbox("", state: commandsState,
                     accessibilityTitle: "Select Custom Commands", mixedSelectsAll: false) { model.selectShellParent(included: $0, commandsOnly: true) }
                     .disabled(!model.developerGroupAvailable(.shell) || model.runtime.isActive)),
@@ -265,7 +272,7 @@ struct RestoreSelectionContent: View {
                 attention: { rows in rows.contains { !$0.selectable || $0.reason != nil } ? "Saved Requirements Need Attention" : nil }) { area in
                     let area = area.id == "shell-zsh" ? CoreRestoreInspection.Area(domain: area.domain, label: area.label, selectionMode: area.selectionMode,
                         availability: area.availability, sourcePresent: area.sourcePresent, captureSelected: area.captureSelected, reason: area.reason,
-                        items: area.items.filter { !environmentIDs.contains($0.id) }) : area
+                        items: area.items.filter { !CoreCaptureInventoryRow.Item.isEnvironmentID($0.id) }) : area
                     if area.id != "shell-zsh" || !area.items.isEmpty || area.selectionMode != "items" {
                     RestoreAreaSelectionView(model: model, area: area,
                         expansion: WorkflowExpansion.binding(area.id, in: treeExpansion),
@@ -1042,29 +1049,8 @@ struct RestoreExecutionCategories: View {
     var reviewAppStore: (() -> Void)? = nil
     var resultTrailingSamples: [RestoreTrailingSample]? = nil
     @RestoreViewState private var expandedCategories: Set<String> = []
-    // Split only Result presentation. Preserve physical Core IDs, each row's
-    // verification evidence and the authoritative summary's original domains.
-    static func resultDomains(_ domains: [TaskDomainPresentation]) -> [TaskDomainPresentation] {
-        domains.flatMap { domain in
-            guard domain.id == "shell-zsh" else { return [domain] }
-            let scripts = domain.items.filter { $0.sourceItemID?.hasPrefix("shell-script:") == true }
-            let environment = domain.items.filter { CoreCaptureInventoryRow.Item.isEnvironmentID($0.sourceItemID ?? "") }
-            guard !scripts.isEmpty || !environment.isEmpty else { return [domain] }
-            let aliases = domain.items.filter { $0.sourceItemID?.hasPrefix("shell-script:") != true && !CoreCaptureInventoryRow.Item.isEnvironmentID($0.sourceItemID ?? "") }
-            let aliasDomain = TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol,
-                items: aliases, activityState: domain.activityState, resultCategoryIssue: domain.resultCategoryIssue,
-                resultProblemDomains: domain.resultProblemDomains, resultCategoryMessage: domain.resultCategoryMessage,
-                resultProblemMessages: domain.resultProblemMessages, confirmedFinalState: domain.confirmedFinalState)
-            let scriptDomain = TaskDomainPresentation(id: ShellCommandPresentation.scriptsID, title: "Scripts",
-                symbol: "applescript", items: scripts)
-            let environmentDomain = TaskDomainPresentation(id: DeveloperSelectionGroup.environmentID, title: "Variables & PATH",
-                symbol: "list.bullet.rectangle", items: environment)
-            return (aliases.isEmpty && !domain.resultCategoryIssue ? [] : [aliasDomain])
-                + (scripts.isEmpty ? [] : [scriptDomain]) + (environment.isEmpty ? [] : [environmentDomain])
-        }
-    }
     static func disclosureIDs(_ domains: [TaskDomainPresentation], appStore: AppStoreRestorePresentation? = nil) -> Set<String> {
-        Set(domains.flatMap { [$0.id] + Array(disclosureIDs($0.resultChildren)) }
+        Set(domains.flatMap { [$0.id] + Array(disclosureIDs($0.rebuildResultChildren)) }
             + (appStore?.items.isEmpty == false ? ["app-store"] : []))
     }
     static func toggledCategories(_ expanded: Set<String>, ids: Set<String>) -> Set<String> {
@@ -1081,7 +1067,7 @@ struct RestoreExecutionCategories: View {
         return result
     }
     static func sectionTitle(_ domain: TaskDomainPresentation) -> String? {
-        if [ShellCommandPresentation.scriptsID, DeveloperSelectionGroup.environmentID].contains(domain.id) { return "For Experienced Users" }
+        if [ShellCommandPresentation.scriptsID, DeveloperSelectionGroup.environmentID, DeveloperSelectionGroup.settingsID].contains(domain.id) { return "For Experienced Users" }
         if DeveloperSelectionGroup.group(for: domain.id) != nil { return "For Experienced Users" }
         switch CaptureHierarchy.group(for: domain.id) {
         case .applicationsTools, .macOSSettings, .vscode: return "Standard Setup"
@@ -1101,13 +1087,12 @@ struct RestoreExecutionCategories: View {
     }
     @Environment(\.workflowListViewport) private var pinnedList
     var body: some View {
-        let presentationDomains = resultStatuses ? Self.resultDomains(domains) : domains
         VStack(alignment: .leading, spacing: pinnedList ? 12 : 20) {
             if resultStatuses && (!domains.isEmpty || appStore != nil) {
                 HStack {
                     Text("Details by Category").font(.headline).accessibilityAddTraits(.isHeader)
                     Spacer()
-                    let ids = Self.disclosureIDs(presentationDomains, appStore: appStore)
+                    let ids = Self.disclosureIDs(domains, appStore: appStore)
                     if !ids.isEmpty {
                         Button(WorkflowExpansion.allExpanded(expandedCategories, available: ids) ? "Collapse All" : "Expand All") {
                             expandedCategories = Self.toggledCategories(expandedCategories, ids: ids)
@@ -1125,8 +1110,7 @@ struct RestoreExecutionCategories: View {
             }
             if !domains.isEmpty || appStore?.items.isEmpty == false {
                 WorkflowList {
-                    let ordered = Self.orderedRows(domains.filter { $0.id != "app-store" }, appStore: appStore)
-                    let rows = resultStatuses ? Self.resultDomains(ordered) : ordered
+                    let rows = Self.orderedRows(domains.filter { $0.id != "app-store" }, appStore: appStore)
                     VStack(spacing: 0) {
                         ForEach(Array(rows.enumerated()), id: \.element.id) { index, domain in
                             if let section = Self.sectionTitle(domain), index == 0 || Self.sectionTitle(rows[index - 1]) != section {
@@ -1144,7 +1128,8 @@ struct RestoreExecutionCategories: View {
                                     get: { expandedCategories.contains(domain.id) },
                                     set: { value in
                                         if value { expandedCategories.insert(domain.id) } else { expandedCategories.remove(domain.id) }
-                                    }), treeExpansion: $expandedCategories, rebuildResult: true)
+                                    }), treeExpansion: $expandedCategories,
+                                    hierarchyStep: domain.id == "shell-zsh" ? CaptureReviewPresentation.hierarchyStep : 36 + 16, rebuildResult: true)
                             } else {
                             ViewThatFits(in: .horizontal) {
                                 HStack(spacing: 12) {
@@ -1163,7 +1148,7 @@ struct RestoreExecutionCategories: View {
                     }.modifier(WorkspaceCardSurface())
                 }
             }
-        }.environment(\.restoreTrailingSamples, resultTrailingSamples ?? RestoreTrailingSample.result(domains, appStore: appStore))
+        }.environment(\.restoreTrailingSamples, resultTrailingSamples ?? RestoreTrailingSample.result(domains, appStore: appStore, rebuildResult: resultStatuses))
 
     }
 }
@@ -1206,14 +1191,14 @@ struct RestoreTrailingSample {
     var subtitle: String? = nil
     var counts: [(String, Int)] = []
     var disclosure = true
-    static func result(_ domains: [TaskDomainPresentation], appStore: AppStoreRestorePresentation?) -> [Self] {
+    static func result(_ domains: [TaskDomainPresentation], appStore: AppStoreRestorePresentation?, rebuildResult: Bool = false) -> [Self] {
         var samples: [Self] = []
         func append(_ domain: TaskDomainPresentation) {
             samples.append(Self(title: RestoreResultDetails.title(domain), counts: RestoreFinalDomain.counts(domain)))
             samples += domain.resultVisibleItems.flatMap { item in
                 RestoreResultDetails.labels(item).map { Self(title: $0, disclosure: false) }
             }
-            domain.resultChildren.forEach(append)
+            (rebuildResult ? domain.rebuildResultChildren : domain.resultChildren).forEach(append)
         }
         domains.forEach(append)
         if let appStore { samples.append(Self(title: appStore.categoryStatus, counts: appStore.counts)) }
@@ -1377,20 +1362,24 @@ struct RestoreFinalDomain: View {
     }
     var body: some View {
         let sharedIDs = domain.sharedObservationItemIDs
-        let children = childrenByID[domain.id] ?? domain.resultChildren
+        let children = childrenByID[domain.id] ?? (rebuildResult ? domain.rebuildResultChildren : domain.resultChildren)
+        let shellResult = rebuildResult && DeveloperSelectionGroup.categoryGroup(for: domain.id) == .shell
+        let shellRoot = shellResult && domain.id == "shell-zsh" ? DeveloperSelectionGroup.shell : nil
+        let groupedIDs = Set(children.flatMap(\.items).map(\.id))
+        let directItems = children.isEmpty ? domain.resultVisibleItems : (shellResult ? domain.resultVisibleItems.filter { !groupedIDs.contains($0.id) } : [])
         let isExpanded = expansion?.wrappedValue ?? expanded
         let childScopes = Set(children.map(\.id)).union(children.flatMap(\.resultProblemDomains))
         let independentIssue = domain.resultCategoryIssue && (domain.resultProblemDomains.isEmpty
             || !domain.resultProblemDomains.isSubset(of: childScopes))
         let statusInChildren = isExpanded && !children.isEmpty && (rebuildResult
-            ? !independentIssue : RestoreResultDetails.title(domain) == "Needs Attention" && !domain.resultCategoryIssue)
+            ? !independentIssue && directItems.isEmpty : RestoreResultDetails.title(domain) == "Needs Attention" && !domain.resultCategoryIssue)
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 if let expansion { expansion.wrappedValue.toggle() } else { expanded.toggle() }
             } label: {
-                RestoreResultCategoryHeader(id: domain.id, title: domain.title, symbol: domain.symbol,
+                RestoreResultCategoryHeader(id: shellRoot?.id ?? domain.id, title: shellRoot?.title ?? domain.title, symbol: shellRoot?.symbol ?? domain.symbol,
                     state: Self.finalStatus(domain), status: RestoreResultDetails.title(domain),
-                    counts: rebuildResult && depth >= 2 ? [] : Self.counts(domain), depth: depth,
+                    counts: rebuildResult && !shellResult && depth >= 2 ? [] : Self.counts(domain), depth: depth,
                     expanded: isExpanded, showsStatus: !statusInChildren, hierarchyStep: hierarchyStep)
             }.buttonStyle(.plain).accessibilityValue((expansion?.wrappedValue ?? expanded) ? "Expanded" : "Collapsed")
             if expansion?.wrappedValue ?? expanded {
@@ -1403,8 +1392,9 @@ struct RestoreFinalDomain: View {
                                 childrenByID: childrenByID, itemExplanations: itemExplanations, hierarchyStep: hierarchyStep,
                                 rebuildResult: rebuildResult)
                         }
-                    } else {
-                        ForEach(domain.resultVisibleItems) { item in
+                    }
+                    if children.isEmpty || !directItems.isEmpty {
+                        ForEach(directItems) { item in
                             RestoreResultItemRow(item: item, notRun: domain.executionStatus == .notRun, depth: depth,
                                 suppressExplanation: itemExplanations[item.id] == nil && sharedIDs.contains(item.id),
                                 explanation: itemExplanations[item.id], hierarchyStep: hierarchyStep, conciseDiagnostics: rebuildResult)
@@ -1642,7 +1632,7 @@ struct RestoreResultContent: View {
             if !domains.isEmpty || manual?.items.isEmpty == false {
                 RestoreExecutionCategories(domains: domains, showsWarnings: false, resultStatuses: true,
                     appStore: manual, reviewAppStore: reviewAppStore,
-                    resultTrailingSamples: RestoreTrailingSample.result(tasks?.automaticDomains ?? [], appStore: tasks?.appStore))
+                    resultTrailingSamples: RestoreTrailingSample.result(tasks?.automaticDomains ?? [], appStore: tasks?.appStore, rebuildResult: true))
             }
             if showsActions { RestoreResultActions(result: result, refresh: refresh, done: done, logRuntime: logRuntime) }
         }

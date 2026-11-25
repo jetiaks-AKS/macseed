@@ -415,7 +415,7 @@ def capture(root, operation, parameters, channel, event):
                 return 0
             rows, secure, environment = scan(root, stage, event)
             environment_requested = parameters.get('shell_environment', False)
-            observed_functions = functions.Observation(root, environment=environment_requested)
+            observed_functions = functions.Observation(root, environment=environment_requested, settings=parameters.get('shell_settings', False))
             env_ids = {r['item_id'] for r in observed_functions.entries() if 'environment' in r}
             selection = parameters.get('selection')
             if selection is not None and (type(selection) is not dict or type(selection.get('items')) is not dict):
@@ -550,7 +550,7 @@ def capture(root, operation, parameters, channel, event):
                 if identity.get('source') == 'manual' and external_pair(identity['_source_path'])[3] != identity['_stamp']:
                     raise CaptureError('stale_prepared_capture')
             event('phase_started', {'phase': 'bundle_creation'})
-            if typed is not None and functions.Observation(root, environment=environment_requested).binding != observed_functions.binding:
+            if typed is not None and functions.Observation(root, environment=environment_requested, settings=parameters.get('shell_settings', False)).binding != observed_functions.binding:
                 raise CaptureError('stale_prepared_capture')
             previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
             try:

@@ -11,7 +11,8 @@ from typing import List, Literal, Optional, TypedDict, Union
 
 MAGIC = b'MBT-SHELL-STATE-1\n'
 MAGIC2 = b'MBT-SHELL-STATE-2\n'
-MAGICS = (MAGIC, MAGIC2)
+MAGIC3 = b'MBT-SHELL-STATE-3\n'
+MAGICS = (MAGIC, MAGIC2, MAGIC3)
 _environment_spec = importlib.util.spec_from_file_location('shell_environment', Path(__file__).with_name('environment.py'))
 environment = importlib.util.module_from_spec(_environment_spec)
 _environment_spec.loader.exec_module(environment)
@@ -21,6 +22,7 @@ DEFINITIONS = 'generated/shell/definitions.data'
 SEMANTICS = 'shell-semantics-1'
 RESOURCES = 'shell-resources-1'
 MAX_MANIFEST = 1024 * 1024
+MAX_STATEMENTS = 512
 MAX_SOURCE = 128 * 1024
 MAX_SOURCE_TOTAL = 2 * 1024 * 1024
 MAX_DEFINITION = 64 * 1024
@@ -63,7 +65,7 @@ class ContentRef(TypedDict):
 
 class Target(TypedDict):
     id: str
-    kind: Literal['alias', 'function', 'script', 'variable', 'path-operation', 'initializer']
+    kind: Literal['alias', 'function', 'script', 'variable', 'path-operation', 'initializer', 'setting']
     key: str
 
 
@@ -181,7 +183,18 @@ def item_identity(row):
     if row['kind'] not in environment.KINDS:
         return identity(row['kind'], row['key'])
     details = row['details']
-    keys(details, 'span ordinal intent')
+    if row['kind'] == 'setting' and type(details) is dict and 'placement' in details:
+        keys(details, 'span ordinal intent placement')
+        placement = details['placement']
+        if type(placement) is dict and 'source_required' in placement:
+            keys(placement, 'graph slot source_required')
+            require(placement['source_required'] is True, 'reference_invalid')
+        else:
+            keys(placement, 'graph slot')
+        require(type(placement['graph']) is str and HEX.fullmatch(placement['graph']), 'reference_invalid')
+        integer(placement['slot'], 0, MAX_STATEMENTS)
+    else:
+        keys(details, 'span ordinal intent')
     integer(details['ordinal'], 0, MAX_DECLARATIONS - 1)
     require(type(row['key']) is str and type(row['source']) is str)
     key = [row['source'], row['key'], details['ordinal']]
@@ -323,11 +336,11 @@ def manifest_keys(value):
 
 def _validate(value, payloads):
     manifest_keys(value)
-    require(type(value['schema']) is int and value['schema'] in (1, 2) and
-            value['semantic_profile'] == (SEMANTICS if value['schema'] == 1 else 'shell-semantics-2') and value['resource_profile'] == RESOURCES,
+    require(type(value['schema']) is int and value['schema'] in (1, 2, 3) and
+            value['semantic_profile'] == f"shell-semantics-{value['schema']}" and value['resource_profile'] == RESOURCES,
             'unsupported_contract')
     contracts = value['required_contracts']
-    require(type(contracts) is dict and all(k in KINDS + (environment.KINDS + ('selection-evidence',) if value['schema'] == 2 else ()) and type(v) is int and v == 1 for k, v in contracts.items()),
+    require(type(contracts) is dict and all(k in KINDS + (environment.KINDS + ('selection-evidence',) if value['schema'] >= 2 else ()) and type(v) is int and v == 1 for k, v in contracts.items()),
             'unsupported_contract')
     sources = _rows(value, 'sources', MAX_SOURCES + legacy().MAX_FILES)
     loads = _rows(value, 'loads', MAX_LOADS)
@@ -338,6 +351,8 @@ def _validate(value, payloads):
     for row in sources:
         keys(row, 'id path role size sha256')
         require(row['role'] in ('zsh', 'script'), 'unsupported_contract')
+        if value['schema'] == 3:
+            require(type(row['path']) is str and not legacy().sources.history_path(row['path']), 'content_invalid')
         require(row['id'] == source_identity(row['path']), 'identity_invalid')
         require(row['path'].casefold() not in source_paths, 'ambiguous_record')
         source_paths.add(row['path'].casefold())
@@ -351,7 +366,7 @@ def _validate(value, payloads):
     require(source_total <= MAX_SOURCE_TOTAL and zsh_sources <= MAX_SOURCES and
             script_sources <= legacy().MAX_FILES, 'resource_limit')
     source_map = _indexed(sources)
-    restricted_sources = {r['id'] for r in sources if value['schema'] == 2 and environment.PRIVATE.search(r['path'])}
+    restricted_sources = {r['id'] for r in sources if value['schema'] >= 2 and environment.PRIVATE.search(r['path'])}
     restricted_loads = set()
     load_map, depths, last_order = {}, {}, -1
     for row in loads:
@@ -394,7 +409,7 @@ def _validate(value, payloads):
             'resource_limit')
     for row in items:
         keys(row, 'id kind key source loads content details')
-        require(value['schema'] == 2 or row['kind'] in KINDS, 'unsupported_contract')
+        require(value['schema'] >= 2 or row['kind'] in KINDS, 'unsupported_contract')
         require(row['id'] == item_identity(row), 'identity_invalid')
     item_map = _indexed(items)
     names = [row['key'] for row in items if row['kind'] in ('alias', 'function')]
@@ -456,7 +471,7 @@ def _validate(value, payloads):
                 family = (row['source'], row['kind'], row['key'])
                 environment_order.setdefault(family, []).append((first, details['ordinal']))
                 try:
-                    kind, name, intent = environment.classify(text)
+                    kind, name, intent = environment.classify(text, settings=value['schema'] == 3)
                 except environment.Excluded:
                     raise Invalid('content_invalid') from None
                 require(row['kind'] == kind and row['key'] == name and
@@ -514,11 +529,12 @@ def _validate(value, payloads):
                     type(data[0]) is str and HEX.fullmatch(data[0]), 'reference_invalid')
             integer(data[1], 0, MAX_SOURCE)
         witnesses = proof['declarations']
-        require(value['schema'] == 2 and type(witnesses) is dict and bool(witnesses) and
+        require(value['schema'] >= 2 and type(witnesses) is dict and bool(witnesses) and
                 len(witnesses) + declarations <= MAX_DECLARATIONS, 'resource_limit')
         for key, receipt in witnesses.items():
-            require(re.fullmatch(r'shell-(?:variable|path-operation|initializer|alias|function):[0-9a-f]{64}', key)
+            require(re.fullmatch(r'shell-(?:variable|path-operation|initializer|setting|alias|function):[0-9a-f]{64}', key)
                     and key not in item_map, 'reference_invalid')
+            require(value['schema'] == 3 or not key.startswith('shell-setting:'), 'unsupported_contract')
             keys(receipt, 'unit sha256 size offset family ordinal visits')
             visits = _rows(receipt, 'visits', MAX_LOADS)
             require(visits, 'reference_invalid')
@@ -548,7 +564,7 @@ def _validate(value, payloads):
         require(type(bindings) is dict and len(bindings) <= MAX_DECLARATIONS, 'resource_limit')
         for key, fingerprint in bindings.items():
             require((key in item_map or key in witnesses) and
-                    key.startswith(('shell-variable:', 'shell-path-operation:', 'shell-initializer:')) and
+                    key.startswith(('shell-variable:', 'shell-path-operation:', 'shell-initializer:', 'shell-setting:')) and
                     type(fingerprint) is str and HEX.fullmatch(fingerprint), 'reference_invalid')
     orders = []
     for row in dependencies:
@@ -581,7 +597,7 @@ def _validate(value, payloads):
                 require(bounds[0] <= site[0] < site[1] <= bounds[1], 'reference_invalid')
         orders.append(_dependency_order(row))
     require(orders == sorted(set(orders)), 'ambiguous_record')
-    require((value['schema'] == 2) == any(r['kind'] in environment.KINDS for r in items), 'unsupported_contract')
+    require(value['schema'] == declaration_schema(items), 'unsupported_contract')
     require(contracts == _contracts(items, dependencies, selection_evidence='selection_evidence' in value), 'unsupported_contract')
 
 
@@ -590,7 +606,7 @@ def decode(raw, payloads) -> ShellState:
     require(raw.startswith(MAGICS), 'unsupported_contract')
     value = _json(raw[len(MAGIC):], MAX_MANIFEST)
     _validate(value, payloads)
-    require(raw.startswith(MAGIC2) == (value['schema'] == 2), 'unsupported_contract')
+    require(raw.startswith(MAGICS[value['schema'] - 1]), 'unsupported_contract')
     return ShellState(value, dict(payloads))
 
 
@@ -598,7 +614,7 @@ def encode(state):
     require(type(state) is ShellState)
     _json_tree(state._value)
     _validate(state._value, state._payloads)
-    raw = (MAGIC2 if state._value['schema'] == 2 else MAGIC) + (json.dumps(state._value, sort_keys=True, ensure_ascii=True, separators=(',', ':')) + '\n').encode()
+    raw = MAGICS[state._value['schema'] - 1] + (json.dumps(state._value, sort_keys=True, ensure_ascii=True, separators=(',', ':')) + '\n').encode()
     require(len(raw) <= MAX_MANIFEST, 'resource_limit')
     return raw, dict(sorted(state._payloads.items()))
 
@@ -634,13 +650,17 @@ def with_scripts(value, scripts):
                     selection_evidence=value._value.get('selection_evidence'))
 
 
+def declaration_schema(items):
+    if any(row['kind'] == 'setting' for row in items):
+        return 3
+    return 2 if any(row['kind'] in environment.VARIABLE_KINDS for row in items) else 1
+
+
 def assemble(sources, loads, items, dependencies, contents, *, selection_evidence=None) -> ShellState:
     """Build canonical private records from explicit items; never infer selection."""
     value = dict(schema=1, semantic_profile=SEMANTICS, resource_profile=RESOURCES,
                  required_contracts={}, sources=sources, loads=loads, items=items,
                  dependencies=dependencies, content_refs=[])
-    if any(row.get('kind') in environment.KINDS for row in items):
-        value.update(schema=2, semantic_profile='shell-semantics-2')
     if selection_evidence:
         value['selection_evidence'] = selection_evidence
     _json_tree(value)
@@ -652,6 +672,8 @@ def assemble(sources, loads, items, dependencies, contents, *, selection_evidenc
     for row in value['items']:
         keys(row, 'id kind key source loads details')
         require(row['id'] == item_identity(row), 'identity_invalid')
+    schema = declaration_schema(value['items'])
+    value.update(schema=schema, semantic_profile=f'shell-semantics-{schema}')
     require(type(contents) is dict and set(contents) == {r['id'] for r in value['items']}, 'reference_invalid')
     require(all(type(raw) is bytes for raw in contents.values()) and
             sum(len(raw) for raw in contents.values()) <= MAX_DEFINITION_TOTAL + legacy().MAX_CONTENT_BYTES,
@@ -757,6 +779,8 @@ def select(state, item_ids) -> ShellState:
                     sha256=source['sha256'], size=source['size'], offset=row['details']['span'][0],
                     family=declaration_family(row), ordinal=row['details'].get('ordinal'),
                     visits=[[[v['order'], v['site']] for v in route] for route in declaration_routes(row, loads)])
+        if declaration_schema(items) < 3:
+            witnesses = {key: receipt for key, receipt in witnesses.items() if not key.startswith('shell-setting:')}
         if witnesses:
             bindings = dict(previous.get('bindings', {}))
             by_owner = {}
@@ -766,6 +790,7 @@ def select(state, item_ids) -> ShellState:
             for owner, edges in by_owner.items():
                 if owner in witnesses or any(e['target']['id'] in witnesses for e in edges):
                     bindings.setdefault(owner, binding_receipt(edges))
+            bindings = {key: mark for key, mark in bindings.items() if key in witnesses or key in selected}
             proof = dict(declarations=witnesses, bindings=bindings, ancestors=ancestors)
     return assemble([r for r in value['sources'] if r['id'] in used_sources],
                     [r for r in value['loads'] if r['id'] in used_loads], items,
@@ -786,7 +811,7 @@ def parser_response(source, response, returncode):
             previous = 0
             # Helper protocol capacity, independent of the observer's selected
             # declaration budget (as for definitions below).
-            for bounds in _rows(value, 'statements', 512):
+            for bounds in _rows(value, 'statements', MAX_STATEMENTS):
                 first, last = span(bounds, len(source))
                 require(first >= previous, 'parser_invalid')
                 previous = last

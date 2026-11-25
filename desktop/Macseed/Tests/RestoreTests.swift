@@ -297,14 +297,15 @@ import CryptoKit
         let failedTasks = RestoreTaskPresentation(preview: tracked.executionPreview!, plan: tracked.executionPlan!,
             events: tracked.categoryPresentationEvents, result: tracked.executionResult, executing: true, operationProgress: true)
         let visible = RestoreResultDetails.domains(failedTasks.automaticDomains, result: tracked.executionResult)
-        let split = RestoreExecutionCategories.resultDomains(visible)
-        let aliasResult = split.first { $0.id == "shell-zsh" }!
-        let scriptResult = split.first { $0.id == ShellCommandPresentation.scriptsID }!
+        let shell = visible.first { $0.id == "shell-zsh" }!
+        let commands = shell.rebuildResultChildren.first { $0.id == ShellCommandPresentation.commandsID }!
+        let aliasResult = commands.rebuildResultChildren.first { $0.id == ShellCommandPresentation.aliasesID }!
+        let scriptResult = commands.rebuildResultChildren.first { $0.id == ShellCommandPresentation.scriptsID }!
         precondition(aliasResult.items.allSatisfy { $0.sourceItemID?.hasPrefix("shell-script:") != true })
         precondition(scriptResult.items.count == 2 && scriptResult.items.allSatisfy(RestoreResultDetails.verified))
         precondition(!scriptResult.resultCategoryIssue && RestoreResultDetails.title(scriptResult) == "Complete")
-        precondition(split.flatMap(\.items).map(\.id).sorted() == visible.flatMap(\.items).map(\.id).sorted())
-        precondition(RestoreExecutionCategories.disclosureIDs(split).contains(ShellCommandPresentation.scriptsID))
+        precondition(commands.rebuildResultChildren.flatMap(\.items).map(\.id).sorted() == commands.items.map(\.id).sorted())
+        precondition(RestoreExecutionCategories.disclosureIDs(visible).contains(ShellCommandPresentation.scriptsID))
         try productionWriter.write(to: fixtureWriter)
         let restoredScripts = tracked.selectedShellScripts.map { trackedHome.appendingPathComponent($0.path) }
         let restoredStamps = try restoredScripts.map { try fm.attributesOfItem(atPath: $0.path)[.modificationDate] as! Date }

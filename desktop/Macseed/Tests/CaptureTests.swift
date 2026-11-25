@@ -1059,10 +1059,14 @@ import Vision
     }
     @MainActor static func main() async throws {
         setbuf(stdout, nil)
+        if CommandLine.arguments.contains("--settings-presentation-only") {
+            try await settingsPresentationChecks()
+            return
+        }
         // Foundation resolves /private/var to /var, while Core requires Python's
         // canonical parent spelling. Use an explicit canonical fixture root.
         let scratch = ProcessInfo.processInfo.environment["TMPDIR"].map { URL(fileURLWithPath: $0, isDirectory: true) } ?? FileManager.default.temporaryDirectory
-        let lifecycle = CommandLine.arguments.contains("--environment-lifecycle-only") || CommandLine.arguments.contains("--environment-function-preview-only")
+        let lifecycle = CommandLine.arguments.contains("--settings-colors-only") || CommandLine.arguments.contains("--settings-scan-only") || CommandLine.arguments.contains("--settings-only") || CommandLine.arguments.contains("--environment-lifecycle-only") || CommandLine.arguments.contains("--environment-function-preview-only")
         let lifecycleRoot = URL(fileURLWithPath: scratch.path.hasPrefix("/var/") ? "/private" + scratch.path : scratch.path)
         let root = (lifecycle ? lifecycleRoot : !Set(["--shell-ui-only", "--confirmation-ui-only", "--ssh-confirmation-only", "--environment-only"]).isDisjoint(with: CommandLine.arguments) ? scratch : URL(fileURLWithPath: "/private/tmp"))
             .appendingPathComponent("macseed-desktop-capture-tests-" + UUID().uuidString)
@@ -1722,6 +1726,7 @@ import Vision
         try await secureSelectionChecks(model: model, core: core)
         try await realCore(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
         try await realCore(root: root.appendingPathComponent("shell-focused"), repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, shellOnly: true)
+        try await settingsPresentationChecks()
         try await realCore(root: root.appendingPathComponent("environment-lifecycle"), repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, environmentOnly: true)
         try await realCore(root: root.appendingPathComponent("mixed-shell-focused"), repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, mixedOnly: true)
         try await realCore(root: root.appendingPathComponent("gui-mixed-focused"), repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, mixedOnly: true, guiOnly: true)
@@ -2007,6 +2012,364 @@ import Vision
         print("PASS: native manual picker contract, duplicate/add-many/default-off/cancel consent, zero-alias Prepare → Confirmation → Execute → Result, rejection and unchanged source bytes")
     }
 
+    @MainActor static func settingsLabels(_ capture: CaptureModel) throws {
+        let items = capture.settingItems
+        let expected = ["AUTO_CD — Enabled": "Automatic directory change — On", "BEEP — Disabled": "Terminal bell — Off",
+                        "HISTSIZE — 1000000": "History in memory — 1,000,000", "SAVEHIST — 1000000": "Saved history limit — 1,000,000",
+                        "Keymap — Emacs": "Editing mode — Emacs"]
+        let titles = Dictionary(uniqueKeysWithValues: items.map { ($0.itemID, expected[$0.label]!) })
+        let settings = ShellSettingsSelection(items: items, selected: [], select: capture.selectDeclarations)
+        let declarations = items.compactMap { item -> String? in
+            let detail = item.environment!
+            let row = settings.row(for: item, detail: detail)
+            precondition(row.title == titles[item.itemID] && row.helpButton?.id == item.itemID)
+            precondition(row.helpButton?.description == detail.explanation &&
+                row.helpButton?.information?.hasSuffix("\n" + detail.context + " · " + detail.origin) == true)
+            return row.helpButton?.information?.components(separatedBy: "\n").first
+        }
+        precondition(Set(declarations) == ["setopt AUTO_CD", "unsetopt BEEP", "HISTSIZE=1000000", "SAVEHIST=1000000", "bindkey -e"])
+        let captureRows = capture.categories.first { $0.id == "shell-zsh" }!.display.items.filter { titles[$0.id] != nil }
+        precondition(Dictionary(uniqueKeysWithValues: captureRows.map { ($0.id, $0.title) }) == titles)
+        let area = CoreRestoreInspection.Area(domain: "shell-zsh", label: "Shell", selectionMode: "items", availability: "available",
+            reason: nil, items: items.map { .init(itemID: $0.itemID, label: $0.label, environment: $0.environment) })
+        precondition(Dictionary(uniqueKeysWithValues: area.displayItems.map { ($0.id, $0.label) }) == titles)
+        let id = items[0].itemID
+        precondition(ShellSettingPresentation(id: id, label: "HISTSIZE — 12345")?.title == "History in memory — 12,345")
+        precondition(ShellSettingPresentation(id: id, label: "SAVEHIST — 42")?.title == "Saved history limit — 42")
+        precondition(ShellSettingPresentation(id: id, label: "Future setting") == nil)
+        let checked = try settingsComparison(items)
+        let rows = checked.categories.first { $0.id == "shell-zsh" }!.items
+        precondition(rows.count == titles.count && rows.allSatisfy { $0.status == .matching })
+        precondition(Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0.title) }) ==
+            Dictionary(uniqueKeysWithValues: titles.map { ("shell-zsh:" + $0.key, $0.value) }))
+    }
+
+    @MainActor static func settingsComparison(_ items: [CoreCaptureInventoryRow.Item]) throws -> EnvironmentStatusPresentation {
+        let labels = Dictionary(uniqueKeysWithValues: items.map { ($0.itemID, $0.label) })
+        let owners = items.map { ["record_id": "v:" + $0.itemID, "domain": "shell-zsh", "item_id": $0.itemID] }
+        let response: Object = ["read_only": true, "publication_occurred": false, "target_mutation_may_have_started": false,
+            "comparison": ["status": "complete", "verdict": "no_differences_detected", "also_incomplete": false,
+                "counts": ["matching": items.count, "missing": 0, "differing": 0, "unverified": 0, "unsupported": 0,
+                           "unresolved": 0, "extra": 0, "unknown_difference": 0]],
+            "comparison_records": owners.map { $0.merging(["comparison_kind": "matching", "support": "supported"]) { _, v in v } },
+            "verification": ["status": "complete"], "extra": ["domains": [], "items": []],
+            "records": ["status": "complete", "verification_records": owners.map { $0.merging(["predicate": CoreCaptureInventoryRow.Item.environmentPredicate($0["item_id"]!)!]) { _, v in v } },
+                        "operation_records": [], "coverage_records": [], "diagnostics": []],
+            "reference_presentation": ["groups": [], "app_store_names": [:], "shell_environment_labels": labels]]
+        return try EnvironmentStatusPresentation(JSONDecoder().decode(CoreComparisonResult.self,
+            from: JSONSerialization.data(withJSONObject: response)))
+    }
+
+    @MainActor static func settingsPlan(_ items: [CoreCaptureInventoryRow.Item], matching: Set<String> = []) throws -> (RestorePreviewPresentation, CoreRestorePreparation) {
+        let area = CoreRestoreInspection.Area(domain: "shell-zsh", label: "Shell", selectionMode: "items", availability: "available",
+            reason: nil, items: items.map { .init(itemID: $0.itemID, label: $0.label, environment: $0.environment) })
+        let catalog = CoreRestoreInspection.Inventory(groups: [.init(id: "Shell", domains: [area.id])], inventory: [area])
+        let ids = items.map(\.itemID)
+        let rows = ids.map { ["domain": area.id, "item_id": $0, "selection_item_id": $0,
+                              "action": matching.contains($0) ? "none" : "set_setting",
+                              "disposition": matching.contains($0) ? "satisfied" : "planned"] }
+        let payload: Object = ["selection": ["categories": [], "items": [area.id: ids]], "selected_groups": ["Shell"],
+            "selected_categories": [area.id], "selected_item_counts": [area.id: ids.count], "prepared_plan_id": String(repeating: "0", count: 64),
+            "include_secure": false, "secure_restore_status": "not_selected", "plan": rows, "has_planned_changes": matching.count < ids.count,
+            "readiness": ["ready": true, "ready_scope": "environment", "reentry": "restore_prepare", "conditions": []],
+            "warning_count": 0, "error_count": 0]
+        let plan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: payload))
+        return (RestorePreviewPresentation(plan, catalog: catalog), plan)
+    }
+
+    @MainActor static func settingsPresentationChecks() async throws {
+        let labels: [(String, ShellSettingGroup)] = [("AUTO_CD — Enabled", .options), ("BEEP — Disabled", .options),
+            ("HISTSIZE — 1000000", .history), ("SAVEHIST — 1000000", .history), ("Keymap — Emacs", .keymaps)]
+        let items = labels.enumerated().map { index, pair in
+            CoreCaptureInventoryRow.Item(itemID: "shell-setting:" + String(repeating: String(index), count: 64),
+                label: pair.0, environment: .init(explanation: "Saved setting", context: "Interactive shells",
+                    origin: ".zshrc", settingGroup: pair.1, captureOnly: false))
+        }
+        let variable = CoreCaptureInventoryRow.Item(itemID: "shell-variable:" + String(repeating: "0", count: 64), label: "EDITOR")
+        let checked = try settingsComparison(items + [variable])
+        let section = EnvironmentComparisonView.visibleSections(checked).first!
+        let shell = section.entries.first!
+        precondition(shell.category.title == "Shell" && shell.children.map(\.title) == ["Variables & PATH", "Shell Settings"])
+        let settings = shell.children.last!
+        let groups = EnvironmentComparisonDomain.shellChildren(settings)
+        precondition(groups.map(\.id) == ShellSettingGroup.allCases.map(\.disclosureID))
+        precondition(groups.map { $0.items.map(\.title) } == [["Automatic directory change — On", "Terminal bell — Off"],
+            ["History in memory — 1,000,000", "Saved history limit — 1,000,000"], ["Editing mode — Emacs"]])
+        precondition(groups.map { checked.categoryCount(.match, category: $0) } == [2, 2, 1])
+        precondition(Set(groups.flatMap(\.items).map(\.id)) == Set(items.map { "shell-zsh:" + $0.itemID }))
+        precondition(checked.categoryCount(.match, category: settings) == 5 && checked.counts["matching"] == 6)
+        let onlySettings = try settingsComparison(items)
+        precondition(EnvironmentComparisonDomain.shellChildren(onlySettings.sections.first!.entries.first!.children.first!).map(\.id) == groups.map(\.id))
+
+        let all = EnvironmentComparisonView.disclosureIDs(in: section)
+        var expanded = Set<String>()
+        let tree = Binding(get: { expanded }, set: { expanded = $0 })
+        expanded = CaptureHierarchy.toggled(expanded, ids: all)
+        precondition(Set(groups.map(\.id)).isSubset(of: expanded))
+        WorkflowExpansion.binding(ShellSettingGroup.history.disclosureID, in: tree).wrappedValue = false
+        let manual = expanded
+        WorkflowExpansion.binding(ShellSettingGroup.history.disclosureID, in: tree).wrappedValue = true
+        expanded = CaptureHierarchy.toggled(expanded, ids: all)
+        precondition(expanded.isEmpty)
+
+        let alias = CoreCaptureInventoryRow.Item(itemID: "shell-alias:" + String(repeating: "a", count: 64), label: "listing")
+        let script = CoreShellScript(id: String(repeating: "b", count: 64), path: "Scripts/example", observationID: "example")
+        let category = CaptureCategory(row: .init(domain: "shell-zsh", status: "present", reason: nil,
+            selectionMode: "items", items: items + [alias], includedSettings: nil))
+        let confirmationIDs = DeveloperSelectionGroup.disclosureIDs(["shell-zsh", ShellCommandPresentation.commandsID,
+            ShellCommandPresentation.scriptsID, DeveloperSelectionGroup.settingsID] + groups.map(\.id))
+        func confirmation(_ selected: [CoreCaptureInventoryRow.Item], expansion: Binding<Set<String>>? = nil) -> TaskDomainList {
+            let selection = CoreCaptureSelection(categories: [], items: ["shell-zsh": (selected + [alias]).map(\.itemID)], secureIdentities: [])
+            let tasks = CaptureTaskPresentation(categories: [category], selection: selection, phase: .confirmation, standaloneScripts: [script])
+            let projected = tasks.domains.flatMap(\.items).filter { $0.item.shellSettingGroup != nil }
+            precondition(projected.count == selected.count && Set(projected.map(\.id)) == Set(selected.map { "shell-zsh:" + $0.itemID }))
+            return TaskDomainList(domains: tasks.domains, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true,
+                captureHierarchy: true, expansion: expansion, captureShellScripts: [script],
+                captureShellScriptInspections: [script.id: .init(id: script.id, observationID: "example", status: "qualified", reason: nil)])
+        }
+        let publication = CoreCapturePublication(publicationOccurred: true, destination: "/fixture.mbt",
+            preparedCaptureID: String(repeating: "a", count: 64), bundle: .init(formatVersion: 1, selectedCategories: [],
+                selectedItemCounts: ["shell-zsh": items.count], secureComponent: false, requiredFeatures: ["shell-state": 3]))
+        let selection = CoreCaptureSelection(categories: [], items: ["shell-zsh": items.map(\.itemID)], secureIdentities: [])
+        let savedTasks = CaptureTaskPresentation(categories: [category], selection: selection, phase: .result, publication: publication)
+        let savedContents = TaskDomainList(domains: savedTasks.domains, stateTitles: [.completed: "Saved"], compactReadyItems: true,
+            captureResultLayout: true, captureHierarchy: true, expansion: .constant(confirmationIDs))
+        let (settingsPreview, settingsPlan) = try Self.settingsPlan(items)
+        let (partialPreview, partialPlan) = try Self.settingsPlan(items, matching: Set(items[2...3].map(\.itemID)))
+        let planned = RestoreTaskPresentation(preview: settingsPreview, plan: settingsPlan).automaticDomains
+        let mixed = RestoreTaskPresentation(preview: partialPreview, plan: partialPlan).automaticDomains
+        let scriptItem = CoreCaptureInventoryRow.Item(itemID: "shell-script:" + script.id, label: "example")
+        let (shellPreview, shellPlan) = try Self.settingsPlan(items + [alias, scriptItem, variable])
+        func progress(_ preview: RestorePreviewPresentation, _ plan: CoreRestorePreparation) -> [TaskDomainPresentation] {
+            RestoreTaskPresentation(preview: preview, plan: plan, executing: true, operationProgress: true).automaticDomains
+        }
+        let (matchingPreview, matchingPlan) = try Self.settingsPlan(items + [alias], matching: [alias.itemID])
+        precondition(progress(matchingPreview, matchingPlan).map(\.title) == ["Shell Settings"])
+        let settingsProgress = progress(settingsPreview, settingsPlan)
+        let mixedProgress = progress(shellPreview, shellPlan)
+        precondition(settingsProgress.map(\.title) == ["Shell Settings"] && mixedProgress.map(\.title) == ["Shell"])
+        func result(_ preview: RestorePreviewPresentation, _ plan: CoreRestorePreparation) throws -> TaskDomainPresentation {
+            var events: [CoreEvent] = []
+            func event(_ type: String, _ data: [String: String]) throws {
+                let row: Object = ["protocol_version": 1, "operation_id": "shell-result", "sequence": events.count + 1, "type": type, "data": data]
+                events.append(try CoreEvent(line: JSONSerialization.data(withJSONObject: row)))
+            }
+            for row in plan.plan {
+                let skipped = row.itemID == scriptItem.itemID
+                let owner = ["domain": row.domain, "item_id": row.itemID]
+                var operation = owner
+                operation["action"] = row.action
+                operation["outcome"] = skipped ? "skipped" : "success"
+                if skipped { operation["reason"] = "intentionally_skipped" }
+                try event("operation_record", operation)
+                if !skipped {
+                    let predicate = CoreCaptureInventoryRow.Item.environmentPredicate(row.itemID) ?? "alias_definition"
+                    try event("verification_record", owner.merging(["predicate": predicate, "support": "supported",
+                        "conformity": row.itemID == variable.itemID ? "mismatch" : "verified"]) { _, v in v })
+                }
+            }
+            let tasks = RestoreTaskPresentation(preview: preview, plan: plan, events: events, executing: true, operationProgress: true)
+            return RestoreResultDetails.domains(tasks.automaticDomains).first!
+        }
+        let settingsResult = try result(settingsPreview, settingsPlan)
+        let mixedResult = try result(shellPreview, shellPlan)
+        let settingsBranch = settingsResult.rebuildResultChildren
+        precondition(settingsBranch.map(\.title) == ["Shell Settings"] && settingsBranch[0].rebuildResultChildren.map(\.items.count) == [2, 2, 1])
+        precondition(RestoreFinalDomain.counts(settingsResult).map(\.1) == [5] && settingsResult.items.allSatisfy(RestoreResultDetails.verified))
+        let branches = mixedResult.rebuildResultChildren
+        precondition(branches.map(\.title) == ["Custom Commands", "Variables & PATH", "Shell Settings"])
+        precondition(branches[0].rebuildResultChildren.map(\.title) == ["Aliases & Functions", "Scripts"])
+        precondition(RestoreFinalDomain.counts(mixedResult).map(\.1) == [6, 1, 1])
+        let resultLeaves = branches.flatMap { $0.rebuildResultChildren.isEmpty ? $0.items : $0.rebuildResultChildren.flatMap(\.items) }
+        precondition(resultLeaves.compactMap(\.sourceItemID).sorted() == shellPlan.plan.map(\.itemID).sorted())
+        func expandedResult(_ domain: TaskDomainPresentation) -> RestoreFinalDomain {
+            let ids = RestoreExecutionCategories.disclosureIDs([domain])
+            return RestoreFinalDomain(domain: domain, expansion: .constant(true), treeExpansion: .constant(ids),
+                hierarchyStep: CaptureReviewPresentation.hierarchyStep, rebuildResult: true)
+        }
+        let previewIDs = RestorePreviewHierarchy.disclosureIDs(planned, settings: [])
+        let mixedIDs = RestorePreviewHierarchy.disclosureIDs(mixed, settings: [])
+        let historyID = ShellSettingGroup.history.disclosureID
+        let leaves = planned.flatMap(\.items)
+        precondition(leaves.count == 5 && Set(leaves.compactMap(\.sourceItemID)) == Set(items.map(\.itemID)))
+        precondition(RestorePreviewMetrics.counts(planned).changes == 5 && RestorePreviewMetrics.counts(mixed).matching == 2)
+        let subgroups = ShellSettingGroup.sections(leaves, by: \.item.shellSettingGroup)
+        precondition(subgroups.map { $0.items.count } == [2, 2, 1])
+        precondition(previewIDs == Set(groups.map(\.id) + [DeveloperSelectionGroup.shell.id, DeveloperSelectionGroup.settingsID]))
+        precondition(mixedIDs == previewIDs.subtracting([historyID]))
+        func preview(_ domains: [TaskDomainPresentation], _ ids: Set<String>) -> TaskDomainList {
+            TaskDomainList(domains: domains, restoreSettingsPreview: true, restorePreviewHierarchy: true, expansion: .constant(ids))
+        }
+        _ = NSApplication.shared
+        let appearance = NSApp.appearance
+        defer { NSApp.appearance = appearance }
+        for dark in [false, true] {
+            NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            func icon(_ id: String?, symbol: String) -> Data {
+                let image = WorkspaceCategoryIcon(symbol: symbol, domainID: id).padding(8)
+                    .background(Color.white).environment(\.colorScheme, dark ? .dark : .light)
+                return NSBitmapImageRep(cgImage: ImageRenderer(content: image).cgImage!).representation(using: .png, properties: [:])!
+            }
+            for group in groups {
+                let pixels = icon(group.id, symbol: group.symbol)
+                precondition(pixels == icon(settings.id, symbol: group.symbol) && pixels != icon(nil, symbol: group.symbol))
+            }
+            for width in [580, 985] {
+                func text<V: View>(_ view: V, snapshot: String? = nil) throws -> String {
+                    try lifecycleText(view.environment(\.colorScheme, dark ? .dark : .light), width: width, snapshot: snapshot.map { "\($0)-\(width)-\(dark ? "dark" : "light")" })
+                }
+                let captured = try text(savedContents)
+                precondition(captured.contains("Shell Settings") && captured.contains("Terminal bell") && captured.contains("Saved"), captured)
+                let singleResult = try text(expandedResult(settingsResult), snapshot: "result-settings")
+                let allResult = try text(expandedResult(mixedResult), snapshot: "result-mixed")
+                for title in ["Shell Settings", "Shell Options", "History", "Key Bindings", "Verified", "Saved history limit", "Terminal bell", "Editing mode"] {
+                    precondition(singleResult.contains(title) && allResult.contains(title), singleResult + " · " + allResult)
+                }
+                precondition(!singleResult.contains("Custom Commands") && !singleResult.contains("Variables & PATH"))
+                precondition(["Custom Commands", "Aliases & Functions", "Scripts", "Variables & PATH", "Skipped"].allSatisfy(allResult.contains), allResult)
+                let progressText = try text(RestoreExecutionCategories(domains: settingsProgress))
+                let mixedProgressText = try text(RestoreExecutionCategories(domains: mixedProgress))
+                precondition(progressText.contains("Shell Settings") && !progressText.contains("Shell Options"), progressText)
+                precondition(mixedProgressText.contains("Shell") && !mixedProgressText.contains("Shell Settings"), mixedProgressText)
+                let check = try text(EnvironmentComparisonView(result: checked, categoryExpansion: .constant(all)))
+                let saved = try text(confirmation(items, expansion: .constant(confirmationIDs)), snapshot: "confirmation")
+                precondition(saved.contains("Shell Settings") && check.contains("Shell Settings") && !saved.contains("5 items included"), saved)
+                let expandedPreview = try text(preview(planned, previewIDs), snapshot: "preview")
+                for title in ["Shell Settings", "Shell Options", "History in memory", "Saved history limit", "Key Bindings", "Editing mode", "Terminal bell",
+                              "Automatic directory change", "Missing declaration", "Collapse All"] {
+                    precondition(expandedPreview.localizedCaseInsensitiveContains(title), expandedPreview)
+                }
+                let hidden = try text(preview(planned, previewIDs.subtracting([historyID])))
+                precondition(hidden.contains("History") && !hidden.contains("Saved history limit") && hidden.contains("Editing mode"), hidden)
+                let actionable = try text(preview(mixed, mixedIDs))
+                precondition(!actionable.contains("History") && actionable.contains("Terminal bell") && actionable.contains("Editing mode"), actionable)
+                let folded = try text(preview(planned, []))
+                precondition(folded.contains("Expand All") && !folded.contains("Key Bindings"), folded)
+                let partial = try text(confirmation([items[1], items[4]], expansion: .constant(confirmationIDs)))
+                precondition(["Shell Options", "History", "Key Bindings", "Automatic", "Terminal bell", "Saved history", "Editing mode", "Match"].allSatisfy { check.contains($0) }, check)
+                precondition(["Aliases & Functions", "Scripts", "Shell Options", "History", "Key Bindings", "2 items included", "Automatic directory change", "Terminal bell", "History in memory", "Saved history limit", "Editing mode"].allSatisfy { saved.localizedCaseInsensitiveContains($0) }, saved)
+                precondition(["Shell Options", "Key Bindings", "1 item included", "Terminal bell", "Editing mode"].allSatisfy { partial.localizedCaseInsensitiveContains($0) }
+                    && !partial.contains("History") && !partial.contains("Automatic"), partial)
+                func headerImage(_ header: CaptureGroupHeader) -> Data {
+                    let renderer = ImageRenderer(content: header.frame(width: CGFloat(width))
+                        .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, dark ? .dark : .light))
+                    let bitmap = NSBitmapImageRep(cgImage: renderer.cgImage!)
+                    return Data(bytes: bitmap.bitmapData!, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+                }
+                for (selected, summary) in [([], "Not Selected"), ([items[0].itemID], "Partially Selected"), (items.map(\.itemID), "All Selected")] {
+                    let status = ShellSettingsSelection(items: items, selected: Set(selected), select: { _, _ in }).parentStatus
+                    let peer = CaptureGroupHeader(title: "Shell Settings", summary: summary, nested: true, expanded: .constant(false))
+                    let setting = CaptureGroupHeader(title: "Shell Settings", statusContent: AnyView(status), nested: true, expanded: .constant(false))
+                    precondition(headerImage(setting) == headerImage(peer), "Selection status must render identically to its peers")
+                }
+                print("PASS: Check, Confirmation parent and children, Preview subgroups and action visibility at \(width) pt in \(dark ? "Dark" : "Light")")
+            }
+        }
+        try await settingsDisclosureChecks(confirmation(items))
+        try await settingsDisclosureChecks(TaskDomainList(domains: planned, restoreSettingsPreview: true, restorePreviewHierarchy: true), nested: true)
+        try await settingsDisclosureChecks(RestoreExecutionCategories(domains: [settingsResult], resultStatuses: true), nested: true)
+        print("PASS: flat Settings-only and mixed Progress, Settings-only and mixed Result, original requirement IDs and outcome counts")
+        let manualText = try lifecycleText(EnvironmentComparisonView(result: checked, categoryExpansion: .constant(manual)), width: 985)
+        let collapsed = try lifecycleText(EnvironmentComparisonView(result: checked), width: 985)
+        precondition(manualText.contains("History") && !manualText.contains("Saved history limit") && manualText.contains("Editing mode"))
+        precondition(collapsed.contains("Expand All") && !collapsed.contains("Key Bindings"))
+        print("PASS: Settings identities, badges 2/2/1, shared selection status, default/manual/all disclosures")
+    }
+
+    @MainActor static func settingsDisclosureChecks<V: View>(_ list: V, nested: Bool = false) async throws {
+        let enhanced = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previous = NSApp.accessibilityAttributeValue(enhanced)
+        NSApp.accessibilitySetValue(true, forAttribute: enhanced)
+        defer { NSApp.accessibilitySetValue(previous, forAttribute: enhanced) }
+        let host = NSHostingView(rootView: list.padding(12).frame(width: 985))
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 985, height: 1100), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.contentView = nil; window.close() }
+        func nodes(_ element: AnyObject, depth: Int = 0) -> [AnyObject] {
+            guard depth < 40 else { return [] }
+            return [element] + (element.accessibilityChildren?() ?? []).flatMap { nodes($0 as AnyObject, depth: depth + 1) }
+        }
+        func button(_ title: String) -> AnyObject {
+            let buttons = nodes(host).filter { [.button, .disclosureTriangle].contains($0.accessibilityRole?()) }
+            guard let row = buttons.first(where: { $0.accessibilityLabel?() == title || $0.accessibilityLabel?()?.hasPrefix(title + ",") == true })
+            else { preconditionFailure("Missing \(title) in \(buttons.compactMap { $0.accessibilityLabel?() })") }
+            return row
+        }
+        func press(_ title: String) async throws {
+            precondition(button(title).accessibilityPerformPress?() == true)
+            try await Task.sleep(for: .milliseconds(80))
+            host.layoutSubtreeIfNeeded()
+        }
+        func visible(_ text: String) -> Bool {
+            nodes(host).contains { node in
+                if node.accessibilityLabel?()?.contains(text) == true { return true }
+                let selector = #selector(NSAccessibilityProtocol.accessibilityValue)
+                guard let object = node as? NSObject, object.responds(to: selector) else { return false }
+                return (object.perform(selector)?.takeUnretainedValue() as? String)?.contains(text) == true
+            }
+        }
+        let rows = ["Shell Options", "History", "Key Bindings"]
+        let chips = [["Automatic directory change", "Terminal bell"], ["History in memory", "Saved history limit"], ["Editing mode"]]
+        try await Task.sleep(for: .milliseconds(100))
+        if nested {
+            try await press("Expand All")
+            for (title, members) in zip(rows, chips) {
+                precondition(chips.joined().allSatisfy(visible))
+                try await press(title)
+                for group in chips { precondition(group.allSatisfy { visible($0) == (group != members) }) }
+                try await press(title)
+            }
+            try await press("Collapse All")
+            precondition(!visible("Shell Options") && !chips.joined().contains(where: visible))
+            try await press("Shell")
+            try await press("Shell Settings")
+            for title in rows { try await press(title) }
+            try await press("Collapse All")
+            precondition(!visible("Shell Options"))
+            print("PASS: Expand All, individual Shell Settings disclosures and Collapse All")
+            return
+        }
+        try await press("Shell")
+        try await press("Custom Commands")
+        let parentLabel = button("Shell Settings").accessibilityLabel?() ?? ""
+        precondition(parentLabel.contains("Ready to Save") && !parentLabel.contains("items included"), parentLabel)
+        try await press("Shell Settings")
+        precondition(!chips.joined().contains(where: visible))
+        let reference = button("Aliases & Functions").accessibilityFrame!()
+        for title in ["Scripts"] + rows {
+            let frame = button(title).accessibilityFrame!()
+            precondition(abs(reference.minX - frame.minX) < 1 && abs(reference.width - frame.width) < 1 && abs(reference.height - frame.height) < 1,
+                "Disclosure geometry for \(title): \(frame), aliases: \(reference)")
+        }
+        for (title, members) in zip(rows, chips) {
+            let count = members.count == 1 ? "1 item included" : "2 items included"
+            precondition(button(title).accessibilityLabel?()?.contains(count) == true)
+            try await press(title)
+            for group in chips { precondition(group.allSatisfy { visible($0) == (group == members) }, "Visible chips after pressing \(title): \(chips.joined().filter(visible))") }
+            try await press(title)
+            precondition(!chips.joined().contains(where: visible))
+        }
+        try await press("Expand All For Experienced Users")
+        precondition(chips.joined().allSatisfy(visible))
+        try await press("History")
+        precondition(!visible("Saved history limit") && visible("Terminal bell") && visible("Editing mode"))
+        try await press("Shell Settings")
+        precondition(!visible("Shell Options") && !chips.joined().contains(where: visible) && visible("Aliases & Functions"))
+        try await press("Shell Settings")
+        precondition(visible("Terminal bell") && !visible("History in memory") && visible("Editing mode"))
+        try await press("Expand All For Experienced Users")
+        if let directory = ProcessInfo.processInfo.environment["MACSEED_UI_ARTIFACTS"],
+           let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: directory).appendingPathComponent("settings-confirmation-peers.png"))
+        }
+        try await press("Collapse All For Experienced Users")
+        precondition(!visible("Shell Options") && !visible("Scripts") && !chips.joined().contains(where: visible))
+        print("PASS: Confirmation subgroup button geometry, per-row counts, independent/parent disclosures and Expand/Collapse All")
+    }
+
     @MainActor static func environmentLifecycle(root: URL, repository: URL, source: CoreLocation, tools: URL) async throws {
         let fm = FileManager.default
         let variable = "export MACSEED_B5_GUI_ROOT=\"$HOME/work\"\n"
@@ -2026,39 +2389,136 @@ import Vision
         }
         try fm.createSymbolicLink(at: tools.appendingPathComponent("bs"), withDestinationURL: source.root.appendingPathComponent("bin/bs"))
         try write("#!/bin/sh\nexit 0\n", tools.appendingPathComponent("sudo"), executable: true)
+        let colorsOnly = CommandLine.arguments.contains("--settings-colors-only")
+        let scanOnly = CommandLine.arguments.contains("--settings-scan-only")
+        var scanLocation = source
+        if scanOnly {
+            let resources = repository.appendingPathComponent("desktop/Macseed/build/Debug/Macseed.app/Contents/Resources")
+            let debug = try CoreLocationResolver(resources: resources).resolve()
+            precondition(debug.root.standardizedFileURL.path == repository.standardizedFileURL.path && debug.kind == .development)
+            scanLocation = CoreLocation(root: debug.root, python: debug.python, home: source.home, temporaryBase: root,
+                                        kind: debug.kind, toolDirectories: [tools], applicationBundle: debug.applicationBundle)
+        }
         let scenarios = CommandLine.arguments.contains("--environment-function-preview-only")
-            ? ["function-conflict"] : ["variables", "mixed", "partial", "function-conflict"]
+            ? ["function-conflict"] : (colorsOnly || scanOnly || CommandLine.arguments.contains("--settings-only") ? ["settings"] : ["variables", "mixed", "partial", "function-conflict", "settings"])
         for scenario in scenarios {
             let functionConflict = scenario == "function-conflict"
             let profile = source.home.appendingPathComponent(".zprofile")
+            let settings = scenario == "settings"
+            let preferences = "setopt AUTO_CD\nunsetopt BEEP\nHISTSIZE=1000000\nSAVEHIST=1000000\nbindkey -e\n"
+            if settings {
+                try write(variable + path + alias + "setopt interactivecomments\n# MACSEED_B6_QA_BEGIN\n" + preferences + "# MACSEED_B6_QA_END\n", startup)
+                try write("# bounded profile\n", profile)
+            }
             if functionConflict { try write("greet() { print saved; }\n" + provider, profile) }
             let mixed = scenario != "variables", partial = scenario == "partial"
             let runtime = CoreRuntime(operationLogs: nil)
-            runtime.start(CoreRequest(.capabilities), location: source); await runtime.waitForCompletion()
+            runtime.start(CoreRequest(.capabilities), location: scanLocation); await runtime.waitForCompletion()
             precondition(runtime.capabilities?.supportsEnvironmentRecovery == true)
-            let capture = CaptureModel(runtime: runtime, location: source)
+            let capture = CaptureModel(runtime: runtime, location: scanLocation)
             capture.scan(); await capture.waitForCompletion()
             precondition(capture.state == .review, "Scan: \(String(describing: capture.failure))")
-            if capture.environmentItems.isEmpty && runtime.latestResult?.data?["shell_functions"]?.object?["codes"] == .array([.string("functions_unavailable")]) {
+            if !scanOnly && capture.environmentItems.isEmpty && runtime.latestResult?.data?["shell_functions"]?.object?["codes"] == .array([.string("functions_unavailable")]) {
                 print("NOT RUN: active Variables & PATH on a non-enforcing parser platform"); return
             }
-            precondition(capture.environmentItems.count == 3, "Inventory: \(capture.environmentItems.map(\.label)), \(capture.environmentNotes)")
+            precondition(capture.environmentItems.count == (settings ? 2 : 3), "Inventory: \(capture.environmentItems.map(\.label)), \(capture.environmentNotes)")
             for category in capture.categories where category.selectable { capture.selectCategory(category.id, included: false) }
             capture.selectEnvironmentItems(included: true)
-            let initializer = capture.environmentItems.first { $0.itemID.hasPrefix("shell-initializer:") }!
-            if !partial { capture.selectItem("shell-zsh", item: initializer.itemID, included: false) }
+            if settings {
+                let decoded = try runtime.latestResult!.decodeData(CoreCapturePreparation.self)
+                let shell = decoded.inventory.first { $0.domain == "shell-zsh" }!
+                let ids = Set(shell.items.filter { CoreCaptureInventoryRow.Item.isSettingID($0.itemID) }.map(\.itemID))
+                precondition(runtime.shellSettingsSupported && ids.count == 5 && ids == Set(capture.settingItems.map(\.itemID)))
+                precondition(Set(capture.settingItems.map(\.label)) == ["AUTO_CD — Enabled", "BEEP — Disabled",
+                    "HISTSIZE — 1000000", "SAVEHIST — 1000000", "Keymap — Emacs"])
+                let options = capture.settingItems.filter { $0.environment?.settingGroup == .options }
+                precondition(options.count == 2)
+                try settingsLabels(capture)
+                func settingsSelection() -> ShellSettingsSelection {
+                    ShellSettingsSelection(items: capture.settingItems, selected: capture.selectedItems["shell-zsh"] ?? [], select: capture.selectDeclarations)
+                }
+                precondition(settingsSelection().parentStatus.summary == "Not Selected")
+                capture.selectDeclarations([options[0].itemID], included: true)
+                let group = settingsSelection()
+                precondition(group.parentStatus.summary == "Partially Selected" && group.groupStatus(options).title == "1 of 2 selected")
+                precondition(group.state(for: options) == .mixed && group.disclosureIDs.count == 4)
+                let tree = DeveloperSelectionGroup.disclosureIDs(["shell-zsh"] + group.disclosureIDs)
+                if (scanOnly || CommandLine.arguments.contains("--settings-only")) && !CommandLine.arguments.contains("--no-renders") {
+                    clickShellCheckbox("Select Shell Options", state: .mixed, model: capture, runtime: runtime, tree: tree)
+                    precondition(Set(options.map(\.itemID)).isSubset(of: capture.selectedItems["shell-zsh"] ?? []))
+                    clickShellCheckbox("Select Shell Options", state: .on, model: capture, runtime: runtime, tree: tree)
+                    precondition(capture.selectedItemCount == 2 && capture.environmentSelectionState == .all)
+                    if scanOnly {
+                        let history = capture.settingItems.first { $0.label == "HISTSIZE — 1000000" }!
+                        let row = settingsSelection().row(for: history, detail: history.environment!)
+                        precondition(row.helpButton?.id == history.itemID &&
+                            row.helpButton?.information == "HISTSIZE=1000000\nInteractive shells · .zshrc")
+                        clickShellCheckbox(row.title, state: .off, model: capture, runtime: runtime, tree: tree)
+                        precondition(capture.selectedItems["shell-zsh"]?.contains(history.itemID) == true)
+                        clickShellCheckbox(row.title, state: .on, model: capture, runtime: runtime, tree: tree)
+                        precondition(capture.selectedItemCount == 2)
+                    }
+                }
+                capture.selectDeclarations(Set(capture.settingItems.map(\.itemID)), included: true)
+                let all = settingsSelection()
+                precondition(all.parentStatus.summary == "All Selected")
+                precondition(ShellSettingGroup.allCases.map { group in
+                    all.groupStatus(capture.settingItems.filter { $0.environment?.settingGroup == group }).title
+                } == ["2 of 2 selected", "2 of 2 selected", "1 of 1 selected"])
+            } else if !partial {
+                let initializer = capture.environmentItems.first { $0.itemID.hasPrefix("shell-initializer:") }!
+                capture.selectItem("shell-zsh", item: initializer.itemID, included: false)
+            }
             if mixed { capture.selectShellParent(included: true) }
             if scenario == "mixed" {
                 capture.addShellScripts([script]); await capture.waitForCompletion()
                 capture.selectCollapsedShellScripts(included: true)
                 capture.resolveShellParent(capture.shellParentConsent!, choice: .includeScripts); await capture.waitForCompletion()
             }
-            let count = partial ? 4 : mixed ? 4 : 2
+            let renderSettings = colorsOnly || (settings && !scanOnly && !CommandLine.arguments.contains("--no-renders"))
+            let settingsTree = Binding<Set<String>>.constant([DeveloperSelectionGroup.shell.id, DeveloperSelectionGroup.settingsID])
+            if renderSettings {
+                try settingsIconColors(CaptureView(model: capture, runtime: runtime, categoryTreeExpansion: settingsTree,
+                    experiencedVisibility: .constant(true)), screen: "Capture Selection")
+            }
+            let count = settings ? 8 : (mixed ? 4 : 2)
             let domains = partial || functionConflict ? 2 : mixed ? 3 : 1
             let archive = root.appendingPathComponent(scenario + ".mbt")
             precondition(capture.selectedItemCount == count && capture.selectedDomainCount == domains)
             capture.prepare(destination: archive); await capture.waitForCompletion()
             precondition(capture.state == .confirmation, "Prepare: \(String(describing: capture.failure))")
+            if renderSettings {
+                try settingsIconColors(CaptureView(model: capture, runtime: runtime, categoryTreeExpansion: settingsTree),
+                    screen: "Capture Confirmation")
+            }
+            if scanOnly {
+                let preparedIDs = Set(capture.preparation?.selection?.items["shell-zsh"] ?? [])
+                precondition(Set(capture.settingItems.map(\.itemID)).isSubset(of: preparedIDs))
+                // The same physical settings follow initialization in the reported profile.
+                let fixture = try String(contentsOf: startup, encoding: .utf8)
+                try write("eval \"$(starship init zsh)\"\n" + fixture, startup)
+                try write("eval \"$(/opt/homebrew/bin/brew shellenv zsh)\"\n", profile)
+                capture.scan(); await capture.waitForCompletion()
+                precondition(capture.state == .review && Set(capture.settingItems.map(\.itemID)) ==
+                    Set(preparedIDs.filter(CoreCaptureInventoryRow.Item.isSettingID)))
+                precondition(!capture.environmentItems.isEmpty && capture.categories.first { $0.id == "shell-zsh" }?.row.items
+                    .contains { $0.itemID.hasPrefix("shell-alias:") } == true)
+                for category in capture.categories where category.selectable { capture.selectCategory(category.id, included: false) }
+                if !CommandLine.arguments.contains("--no-renders") {
+                    let tree = DeveloperSelectionGroup.disclosureIDs(["shell-zsh", DeveloperSelectionGroup.settingsID])
+                    clickShellCheckbox("Select Shell Options", state: .off, model: capture, runtime: runtime, tree: tree)
+                    precondition(capture.selectedItemCount == 2)
+                }
+                capture.selectDeclarations(Set(capture.settingItems.map(\.itemID)), included: true)
+                capture.prepare(destination: archive); await capture.waitForCompletion()
+                precondition(capture.state == .confirmation && capture.preparation?.selection?.items["shell-zsh"]?.count == 5)
+                try write(fixture + "eval \"$(starship init zsh)\"\n", startup)
+                capture.scan(); await capture.waitForCompletion()
+                precondition(capture.state == .review && capture.settingItems.isEmpty)
+                print("PASS: Native Settings parent states, child counts, five display labels, Item Info, Capture/Rebuild/Check IDs and checkbox selection")
+                print("PASS: Debug Native Scan and Prepare select five Settings after initialization; a later evaluator blocks them")
+                return
+            }
             capture.create(); await capture.waitForCompletion()
             precondition(capture.state == .result && capture.publication?.bundle.functionalDomainCount == domains,
                          "Save: \(String(describing: capture.failure))")
@@ -2087,6 +2547,7 @@ import Vision
             let ids = Set(env.map(\.id))
             restore.selectShellItems(ids, included: true)
             precondition(restore.selectedAreaCount == 1 && restore.selectedItemCount == env.count && restore.authorizedShellScripts.isEmpty)
+            if settings { restore.selectShellItems(Set(restore.shellSettingItems.map(\.itemID)), included: true) }
             if mixed {
                 restore.selectShellParent(included: true, commandsOnly: true)
                 if scenario == "mixed" {
@@ -2101,13 +2562,23 @@ import Vision
             precondition(restore.selectedAreaCount == domains && restore.selectedItemCount == count)
             let selection = restore.selection
             let pristine = try snapshot(target)
-            let check = EnvironmentStatusModel(runtime: runtime, location: location)
-            func compare() async -> [DisplayItem] {
+            if renderSettings {
+                try settingsIconColors(RestoreView(model: restore, runtime: runtime, selectionExpansion: settingsTree),
+                    screen: "Rebuild Selection")
+            }
+            let check = EnvironmentStatusModel(runtime: runtime, location: colorsOnly ? source : location)
+            func compare(renderIcons: Bool) async throws -> [DisplayItem] {
                 check.selectBundle(archive); check.compare(); await check.waitForCompletion()
                 precondition(check.state == .result, "Check: \(String(describing: check.failure))")
-                return check.presentation!.categories.first { $0.id == "shell-zsh" }!.items
+                let result = check.presentation!
+                if renderIcons {
+                    try settingsIconColors(EnvironmentComparisonView(result: result,
+                        categoryExpansion: .constant(EnvironmentComparisonView.disclosureIDs(result))), screen: "Check")
+                }
+                return result.categories.first { $0.id == "shell-zsh" }!.items
             }
-            let initial = await compare()
+            let initial = try await compare(renderIcons: colorsOnly)
+            if colorsOnly { return }
             precondition(initial.contains { $0.status == .missing }, "Initial Check: \(initial.map { ($0.title, $0.status) })")
             if partial {
                 precondition(initial.contains { $0.status == .different } && initial.contains { $0.status == .unverified })
@@ -2115,6 +2586,10 @@ import Vision
             let render = scenario == "mixed" && CommandLine.arguments.contains("--environment-lifecycle-only") && !CommandLine.arguments.contains("--no-renders")
             let tree = DeveloperSelectionGroup.disclosureIDs(["shell-zsh", ShellCommandPresentation.commandsID,
                 DeveloperSelectionGroup.environmentID, ShellCommandPresentation.scriptsID])
+            if settings && CommandLine.arguments.contains("--settings-only") && !CommandLine.arguments.contains("--no-renders") {
+                let groups = ShellSettingGroup.allCases.map(\.disclosureID)
+                try renderLifecycle(RestoreSelectionContent(model: restore, expansion: .constant(tree.union(groups + [DeveloperSelectionGroup.settingsID]))), expected: "Key Bindings")
+            }
             if render { try renderLifecycle(RestoreSelectionContent(model: restore, expansion: .constant(tree)), expected: "Variables & PATH") }
             restore.refreshPreview(); await restore.waitForCompletion()
             precondition(restore.state == .preview && restore.canRebuild, "Preview \(scenario): \(String(describing: restore.failure)), \(String(describing: restore.preparation?.plan))")
@@ -2164,12 +2639,18 @@ import Vision
             precondition(verified.count == (partial ? 1 : count), "Verified \(scenario): \(verified.map(\.resultLabels))")
             if !partial { precondition(summary.attentionCount == 0 && result.outcome == .clean, "Result \(scenario): \(summary.issues.map(\.id))") }
             else { precondition(summary.attentionCount != 0 && verified.first?.sourceItemID?.hasPrefix("shell-alias:") == true) }
-            if render { try renderLifecycle(RestoreView(model: restore, runtime: runtime), expected: "Variables & PATH") }
+            if render {
+                try renderLifecycle(RestoreView(model: restore, runtime: runtime), expected: "Shell")
+                let shell = RestoreResultDetails.domains(tasks.automaticDomains, result: result).first { $0.id == "shell-zsh" }!
+                let expanded = RestoreExecutionCategories.disclosureIDs([shell])
+                try renderLifecycle(RestoreFinalDomain(domain: shell, expansion: .constant(true), treeExpansion: .constant(expanded),
+                    hierarchyStep: CaptureReviewPresentation.hierarchyStep, rebuildResult: true), expected: "Variables & PATH")
+            }
             let after = try String(contentsOf: rc, encoding: .utf8)
-            precondition(partial ? after == "export MACSEED_B5_GUI_ROOT=other\n" + alias : after == variable + path + (mixed ? alias : ""))
+            precondition(partial ? after == "export MACSEED_B5_GUI_ROOT=other\n" + alias : after == variable + path + (mixed ? alias : "") + (settings ? preferences : ""))
             precondition(!fm.fileExists(atPath: target.appendingPathComponent(".zprofile").path))
             let stamp = try fm.attributesOfItem(atPath: rc.path)
-            let final = await compare()
+            let final = try await compare(renderIcons: renderSettings)
             precondition(final.filter { $0.status == .matching }.count == verified.count)
             if !partial {
                 precondition(check.presentation?.needsAttention == false)
@@ -2179,7 +2660,7 @@ import Vision
             }
             if mixed {
                 let section = check.presentation!.sections.flatMap(\.entries).first { $0.id == DeveloperSelectionGroup.shell.id }!
-                precondition(section.children.map(\.title) == ["Custom Commands", "Variables & PATH"])
+                precondition(section.children.map(\.title) == ["Custom Commands", "Variables & PATH"] + (settings ? ["Shell Settings"] : []))
                 precondition(Set(section.children.flatMap(\.items).map(\.id)).count == section.category.items.count)
             }
             if render { try renderLifecycle(EnvironmentComparisonView(result: check.presentation!, categoryExpansion: .constant(EnvironmentComparisonView.disclosureIDs(check.presentation!))), expected: "Variables & PATH") }
@@ -2187,24 +2668,94 @@ import Vision
             for key: FileAttributeKey in [.systemFileNumber, .modificationDate] {
                 precondition((unchanged[key] as? NSObject) == (stamp[key] as? NSObject))
             }
+            if settings {
+                let settingIDs = Set(restore.shellSettingItems.map(\.itemID))
+                let plannedIDs = Set(plan.plan.filter { $0.disposition == "planned" }.map(\.itemID))
+                precondition(settingIDs.count == 5 && settingIDs.isSubset(of: plannedIDs))
+                let projected = tasks.automaticDomains.first { $0.id == "shell-zsh" }!.rebuildResultChildren
+                let settingsResult = projected.first { $0.id == DeveloperSelectionGroup.settingsID }
+                precondition(Set(settingsResult?.items.compactMap(\.sourceItemID) ?? []) == settingIDs)
+                precondition(verified.filter { CoreCaptureInventoryRow.Item.isSettingID($0.sourceItemID ?? "") }.count == 5)
+                try write(variable + path + alias, startup)
+                try write(provider, profile)
+            }
             print("PASS: Native \(scenario) Capture/Bundle/Selection/Preview/Execute/Verified Result/Check, \(domains) functional domains and \(count) selected items")
         }
         let preserved = try snapshot(source.home); precondition(preserved == original)
     }
 
-    @MainActor static func renderLifecycle<V: View>(_ view: V, expected: String) throws {
-        for width in [580, 985] {
-            let host = NSHostingView(rootView: view.padding(12).frame(width: CGFloat(width)).fixedSize(horizontal: false, vertical: true)
-                .background(Color(nsColor: .windowBackgroundColor)))
+    @MainActor static func settingsIconColors<V: View>(_ view: V, screen: String) throws {
+        _ = NSApplication.shared
+        let previous = NSApp.appearance
+        defer { NSApp.appearance = previous }
+        for scheme in [ColorScheme.light, .dark] {
+            NSApp.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+            let host = NSHostingView(rootView: view.padding(12).frame(width: 985).fixedSize(horizontal: false, vertical: true)
+                .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, scheme))
             host.frame.size = host.fittingSize
             host.layoutSubtreeIfNeeded()
             let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
             host.cacheDisplay(in: host.bounds, to: bitmap)
-            let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate
-            try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
-            let labels = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            if let directory = ProcessInfo.processInfo.environment["MACSEED_UI_ARTIFACTS"] {
+                let name = "\(screen)-\(scheme).png"
+                try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name))
+            }
+            let image = bitmap.cgImage!
+            let recognition = VNRecognizeTextRequest()
+            try VNImageRequestHandler(cgImage: image, options: [:]).perform([recognition])
+            let labels = (recognition.results ?? []).compactMap { $0.topCandidates(1).first }
+            let accent = NSColor(DeveloperSelectionGroup.accent(scheme)).usingColorSpace(.sRGB)!
+            let scale = CGFloat(image.width) / host.bounds.width
+            for group in ShellSettingGroup.allCases {
+                let boxes = labels.compactMap { label -> CGRect? in
+                    guard let range = label.string.range(of: group.title, options: [.caseInsensitive, .anchored, .backwards]) else { return nil }
+                    return try? label.boundingBox(for: range)?.boundingBox
+                }
+                precondition(boxes.count == 1, "\(screen) \(group.title): \(labels.map(\.string))")
+                // Sample only the symbol immediately to the left of this subgroup title.
+                let box = boxes[0]
+                let rect = CGRect(x: box.minX * CGFloat(image.width) - 33 * scale,
+                    y: (1 - box.midY) * CGFloat(image.height) - 8 * scale, width: 30 * scale, height: 16 * scale)
+                let icon = NSBitmapImageRep(cgImage: image.cropping(to: rect.integral)!)
+                let background = icon.colorAt(x: 0, y: 0)!.usingColorSpace(.sRGB)!
+                var matching = 0
+                for x in 0..<icon.pixelsWide { for y in 0..<icon.pixelsHigh {
+                    guard let pixel = icon.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+                    // Thin SF Symbol strokes blend the accent with the row background.
+                    let coverage = (pixel.redComponent - pixel.blueComponent) / (accent.redComponent - accent.blueComponent)
+                    guard (0.45...1.05).contains(coverage) else { continue }
+                    func matches(_ channel: KeyPath<NSColor, CGFloat>) -> Bool {
+                        let base = background[keyPath: channel]
+                        return abs(pixel[keyPath: channel] - (base + coverage * (accent[keyPath: channel] - base))) < 0.06
+                    }
+                    if matches(\.redComponent) && matches(\.greenComponent) && matches(\.blueComponent) { matching += 1 }
+                } }
+                precondition(matching >= 5, "\(screen) \(scheme) \(group.title) icon at \(rect): \(matching) Shell accent pixels")
+            }
+            print("PASS: \(screen) \(scheme) — all three rendered subgroup icons use the Shell accent")
+        }
+    }
+
+    @MainActor static func renderLifecycle<V: View>(_ view: V, expected: String) throws {
+        for width in [580, 985] {
+            let labels = try lifecycleText(view, width: width)
             precondition(labels.localizedCaseInsensitiveContains(expected), "Rendered \(width) pt: \(labels)")
         }
+    }
+
+    @MainActor static func lifecycleText<V: View>(_ view: V, width: Int, snapshot: String? = nil) throws -> String {
+        let host = NSHostingView(rootView: view.padding(12).frame(width: CGFloat(width)).fixedSize(horizontal: false, vertical: true)
+            .background(Color(nsColor: .windowBackgroundColor)))
+        host.frame.size = host.fittingSize
+        host.layoutSubtreeIfNeeded()
+        let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        if let snapshot, let directory = ProcessInfo.processInfo.environment["MACSEED_UI_ARTIFACTS"] {
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: directory).appendingPathComponent(snapshot + ".png"))
+        }
+        let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate
+        try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
 
     @MainActor static func mixedShellCore(root: URL, repository: URL, core: URL, home: URL, bin: URL, python: URL, guiOnly: Bool = false, environmentOnly: Bool = false) async throws {
